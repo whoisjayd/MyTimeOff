@@ -1,4 +1,4 @@
-import type { ClassifiedPageView } from "./types";
+import type { PageView } from "./types";
 import { DwellTracker } from "./dwell";
 import { ALWAYS_VISIBLE, type BookRenderer, type VisibilitySource } from "./renderer";
 
@@ -7,6 +7,11 @@ export interface ReadingSessionOptions {
   renderer: BookRenderer;
   /** Defaults to always-visible; DOM surfaces should pass a real source. */
   visibility?: VisibilitySource;
+  /**
+   * Where finished page views go. A port, not a client: this module knows nothing
+   * about HTTP, and a test needs no server to check that reading is reported.
+   */
+  onPageView?: (view: PageView) => void;
   tracker?: DwellTracker;
   /** Injectable so tests need no real clock. */
   now?: () => number;
@@ -33,7 +38,11 @@ export class ReadingSession {
     this.renderer = options.renderer;
     this.visibility = options.visibility ?? ALWAYS_VISIBLE;
     this.tracker =
-      options.tracker ?? new DwellTracker({ now: options.now ?? (() => Date.now()) });
+      options.tracker ??
+      new DwellTracker({
+        now: options.now ?? (() => Date.now()),
+        ...(options.onPageView ? { onView: options.onPageView } : {}),
+      });
 
     this.renderer.onPageChange((page) => {
       this.tracker.enterPage(this.bookId, page.locator, page.text);
@@ -56,24 +65,17 @@ export class ReadingSession {
     return this.renderer.prev();
   }
 
-  /** Pages that met the dwell threshold - what the daily goal counts. */
-  countedPageCount(): number {
-    return this.tracker.countedPages().length;
+  /** Every page view of this session, reported or not. */
+  get views(): readonly PageView[] {
+    return this.tracker.views;
   }
 
-  /** The page views a quiz may draw from. Empty means nothing was really read. */
-  quizSpan(): ClassifiedPageView[] {
-    return this.tracker.quizSpan();
-  }
-
-  /** Closes the open page view and unsubscribes. Safe to call twice. */
-  finish(): ClassifiedPageView[] {
-    if (!this.finished) {
-      this.finished = true;
-      this.tracker.finish();
-      this.unsubscribe?.();
-      this.unsubscribe = undefined;
-    }
-    return this.quizSpan();
+  /** Closes the open page view - which reports it - and unsubscribes. Safe twice. */
+  finish(): void {
+    if (this.finished) return;
+    this.finished = true;
+    this.tracker.finish();
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
   }
 }

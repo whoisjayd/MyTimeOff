@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rand::Rng;
 
@@ -19,22 +19,6 @@ pub fn generate() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Where the token lives.
-///
-/// `%LOCALAPPDATA%` is per-user and not roamed, and its default ACL already excludes
-/// other non-administrator users - so the file inherits the protection we want without
-/// hand-rolling Windows ACLs. An administrator can still read it, which is not a boundary
-/// this tool can or should try to defend.
-pub fn default_path() -> io::Result<PathBuf> {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .or_else(|| std::env::var_os("XDG_STATE_HOME"))
-        .or_else(|| std::env::var_os("HOME"))
-        .ok_or_else(|| {
-            io::Error::new(io::ErrorKind::NotFound, "no LOCALAPPDATA, XDG_STATE_HOME or HOME")
-        })?;
-    Ok(PathBuf::from(base).join("MyTimeOff").join("hook-token"))
 }
 
 /// Reads the token, creating one on first run.

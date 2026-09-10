@@ -9,8 +9,10 @@ description = "Loopback hook endpoint and turn state driver for MyTimeOff"
 axum = "0.8.9"
 mytimeoff-core = { path = "../core" }
 rand = "0.10.2"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "time", "net", "io-util"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
 
 [dev-dependencies]

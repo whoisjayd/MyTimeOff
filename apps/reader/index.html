@@ -22,6 +22,21 @@
           <button id="next" type="button" aria-label="Next page">›</button>
         </footer>
       </section>
+      <aside id="indicator" hidden>
+        <span id="indicator-text"></span>
+        <button id="back" type="button">Back to the agent</button>
+      </aside>
+      <section id="quiz" hidden>
+        <h2>Before you go</h2>
+        <p id="quiz-note"></p>
+        <form id="quiz-questions"></form>
+        <footer id="quiz-actions">
+          <button id="quiz-submit" type="button" hidden>Submit answers</button>
+          <!-- Shown only where the mode allows it, which the daemon decides, not this. -->
+          <button id="quiz-skip" type="button" hidden>Skip</button>
+        </footer>
+      </section>
+      <span id="link" data-connected="false" title="daemon unreachable"></span>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

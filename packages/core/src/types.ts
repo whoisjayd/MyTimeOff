@@ -7,8 +7,8 @@ export interface Book {
   format: BookFormat;
   title: string;
   author?: string;
-  /** Absolute path on disk. */
-  path: string;
+  /** Absolute path on disk, where the surface knows it. A browser does not. */
+  path?: string;
   /** Total pages for PDF; for EPUB this is the generated location count. */
   totalPages?: number;
 }
@@ -24,6 +24,10 @@ export type Locator =
 /**
  * One contiguous visit to one page. Dwell excludes time the reader was hidden or
  * unfocused, so an abandoned open window cannot inflate progress.
+ *
+ * There is no `counted` field. Whether a visit was reading or page-turning is decided
+ * by the daemon, which owns the threshold and the history; a surface that classified
+ * its own reading could disagree with the day it is reporting into.
  */
 export interface PageView {
   bookId: string;
@@ -36,67 +40,87 @@ export interface PageView {
   dwellMs: number;
 }
 
-/** A page-view enriched with the classification the goal and quiz depend on. */
-export interface ClassifiedPageView extends PageView {
-  /** False when dwell fell under the skim threshold. */
+/** The daemon's answer to a reported page view. */
+export interface PageViewReceipt {
+  /** False when dwell fell under the skim threshold: seen, not read. */
   counted: boolean;
+  /** False when this visit had already been recorded, which is not an error. */
+  stored: boolean;
+}
+
+/** How today is going, as the daemon sees it. */
+export interface Progress {
+  pagesToday: number;
+  goal: number;
+  met: boolean;
 }
 
 export type ReaderMode = "strict" | "lenient" | "free";
 
-export interface ModePolicy {
+/**
+ * What the gate will accept, decided by the daemon and sent with the quiz.
+ *
+ * The values are deliberately not written down here. Every one of them is a rule the
+ * daemon enforces, and a second copy in a surface could only ever become a copy that
+ * disagrees: a skip button drawn for a mode that refuses skips, or a pass mark shown
+ * that is not the one being marked against. The surface asks; it does not know.
+ */
+export interface Policy {
   quiz: boolean;
   requireAttempt: boolean;
-  /** Fraction of questions that must be correct; null means no pass gate. */
-  passScore: number | null;
-  onFail: "retry_once_then_release" | "release";
+  /** Correct answers needed, as a ratio. Null when nothing has to be right. */
+  passMark: { correct: number; of: number } | null;
+  retries: number;
   skippable: boolean;
 }
 
-export const MODE_POLICIES: Record<ReaderMode, ModePolicy> = {
-  strict: {
-    quiz: true,
-    requireAttempt: true,
-    passScore: 0.67,
-    onFail: "retry_once_then_release",
-    skippable: false,
-  },
-  lenient: {
-    quiz: true,
-    requireAttempt: true,
-    passScore: null,
-    onFail: "release",
-    skippable: true,
-  },
-  free: {
-    quiz: false,
-    requireAttempt: false,
-    passScore: null,
-    onFail: "release",
-    skippable: true,
-  },
-};
-
-export interface QuizQuestion {
+/**
+ * A question as it is asked. There is no answer index, because the answer key never
+ * leaves the daemon - marking happens where the questions were made.
+ */
+export interface AskedQuestion {
   id: string;
   prompt: string;
   choices: string[];
-  /** Index into `choices`. */
-  answerIndex: number;
   /** Locator of the page this question was drawn from. */
   source: Locator;
 }
 
-export interface Quiz {
-  id: string;
-  bookId: string;
-  questions: QuizQuestion[];
-  /** Page locators the quiz was drawn from. */
-  span: Locator[];
-  generatedAt: number;
-  /** True when served from the pre-generation cache rather than on demand. */
-  preGenerated: boolean;
+/** Why the gate let you through. */
+export type Release = "passed" | "attempted" | "exhausted" | "skipped" | "ungated";
+
+/** Why it did not, without spending an attempt. */
+export type Refusal = "not_attempted" | "wrong_quiz" | "not_skippable";
+
+/** What is standing between the reader and the screen they came from. */
+export type Gate =
+  | {
+      gate: "open";
+      quizId: string;
+      questions: AskedQuestion[];
+      policy: Policy;
+      attemptsLeft: number;
+    }
+  | { gate: "released"; reason: Release };
+
+/** One answer: which choice, for which question. Unanswered questions are simply absent. */
+export interface Answer {
+  questionId: string;
+  choice: number;
 }
+
+export interface Score {
+  correct: number;
+  /** Questions with an answer on the sheet, which may be fewer than `total`. */
+  answered: number;
+  total: number;
+}
+
+/** The daemon's ruling on an answer sheet or a skip. */
+export type Verdict =
+  | { outcome: "released"; reason: Release; score: Score | null }
+  | { outcome: "retry"; score: Score; attemptsLeft: number }
+  | { outcome: "refused"; reason: Refusal };
 
 /** Daemon-side reading session, bound to the agent session that triggered it. */
 export type SessionState = "idle" | "armed" | "reading" | "ready" | "gate";

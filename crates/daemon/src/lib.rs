@@ -4,27 +4,58 @@
 //! All the rules live in `mytimeoff-core`. This crate only supplies the things the core
 //! deliberately refuses to know about: a socket, a clock, and a token.
 
+pub mod paths;
+pub mod quiz;
+pub mod settings;
+pub mod store;
 pub mod token;
 
+use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Request, State};
 use axum::http::{StatusCode, header::AUTHORIZATION};
+use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router, middleware};
 use mytimeoff_core::{
-    Alert, Command, Event, HookPayload, Machine, Millis, NotifyPayload, ReaderMode, State as TurnState,
+    Alert, AskedQuestion, Book, Command, Config, Event, Gate, HookPayload, Machine, Millis,
+    NotifyPayload, PageView, Policy, Quiz, ReaderMode, Release, State as TurnState, Submission,
+    Verdict,
 };
 use serde::Serialize;
+
+use crate::quiz::QuestionSource;
+use crate::store::Store;
 use tokio::net::TcpListener;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, broadcast};
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::{Stream, StreamExt};
 
 /// Shared daemon state.
 pub struct Daemon {
     machine: Mutex<Machine>,
+    config: Config,
+    store: Store,
+    /// Where questions come from. Behind a trait object rather than a type parameter so
+    /// that swapping the offline stub for a real generator changes one line in `main`.
+    questions: Arc<dyn QuestionSource>,
+    /// The gate currently being taken, if any. Separate from the state machine because
+    /// the machine deliberately knows nothing about quizzes - only that a gate is open.
+    gate: Mutex<Option<Gate>>,
+    /// Wall-clock milliseconds when the reader was last put on screen.
+    ///
+    /// Wall-clock rather than the monotonic clock the machine uses, because it is compared
+    /// against page views in the store, and those are stamped in calendar time so that
+    /// "which day did you read" has an answer.
+    reading_since: Mutex<Option<i64>>,
+    /// Makes each gate's quiz id unique, so an answer sheet cannot be marked against a
+    /// later quiz. Seeded from the wall clock so ids do not repeat across restarts.
+    gates_opened: AtomicU64,
     /// Monotonic origin. The machine wants milliseconds, not wall-clock time, so a clock
     /// change (NTP, DST, a laptop waking up) cannot make the grace window misfire.
     started: Instant,
@@ -35,6 +66,9 @@ pub struct Daemon {
     /// Recently issued commands. A holding pen until the reader window subscribes; for
     /// now it is what makes behaviour observable from `GET /state`.
     issued: Mutex<Vec<Command>>,
+    /// Fans commands out to every connected surface. The reader subscribes here; a TUI
+    /// or a tray icon can subscribe to the same stream without the daemon knowing.
+    commands: broadcast::Sender<Command>,
     /// What actually arrived, in order, whether or not it changed anything.
     ///
     /// `issued` only shows deliveries the machine acted on, which makes a live wiring
@@ -51,15 +85,36 @@ const ISSUED_HISTORY: usize = 32;
 /// are correctly ignored and never reach it.
 const LOG_HISTORY: usize = 64;
 
+/// Buffered commands per subscriber. A surface further behind than this has stopped
+/// keeping up entirely, and the resynchronise-on-lag path is what recovers it.
+const COMMAND_BUFFER: usize = 32;
+
+/// Pages a gate may draw on. More than it will ask about, because a page can be a chapter
+/// heading with nothing to ask, and because the wrong answers are drawn from the other
+/// pages you read - too few and the choices stop being plausible.
+const GATE_PAGES: u32 = 10;
+
 impl Daemon {
-    pub fn new(mode: ReaderMode, grace: Duration, token: String) -> Arc<Self> {
+    pub fn new(
+        config: Config,
+        store: Store,
+        token: String,
+        questions: Arc<dyn QuestionSource>,
+    ) -> Arc<Self> {
         Arc::new(Daemon {
-            machine: Mutex::new(Machine::new(mode, grace.as_millis() as Millis)),
+            machine: Mutex::new(Machine::new(config.mode, config.grace_ms)),
+            config,
+            store,
+            questions,
+            gate: Mutex::new(None),
+            reading_since: Mutex::new(None),
+            gates_opened: AtomicU64::new(wall_clock_ms() as u64),
             started: Instant::now(),
             token,
             wake: Notify::new(),
             issued: Mutex::new(Vec::new()),
             log: Mutex::new(Vec::new()),
+            commands: broadcast::channel(COMMAND_BUFFER).0,
         })
     }
 
@@ -84,6 +139,19 @@ impl Daemon {
             machine.handle(event)
         };
 
+        for command in &commands {
+            match command {
+                // The gate asks about what you read in this stretch, so the stretch starts
+                // here - at the moment the reader actually took the screen.
+                Command::ShowReader => {
+                    *self.reading_since.lock().expect("reading lock") = Some(wall_clock_ms());
+                }
+                // A new gate never inherits the last one's quiz or its spent retries.
+                Command::StartQuiz => *self.gate.lock().expect("gate lock") = None,
+                _ => {}
+            }
+        }
+
         if !commands.is_empty() {
             let mut issued = self.issued.lock().expect("issued lock");
             issued.extend(commands.iter().copied());
@@ -92,10 +160,33 @@ impl Daemon {
                 issued.drain(..excess);
             }
         }
+        for command in &commands {
+            // Errors mean nothing is listening yet, which is normal: the daemon runs
+            // whether or not a reader is open.
+            let _ = self.commands.send(*command);
+        }
         // Always wake the timer: even an ignored event may have been the one that would
         // have changed the deadline, and a spurious wake costs nothing.
         self.wake.notify_one();
         commands
+    }
+
+    /// The commands a surface needs in order to match the current state from scratch.
+    ///
+    /// A reader that opens - or reconnects after a dropped connection - mid-takeover has
+    /// missed every command already sent, and a broadcast channel replays nothing. Without
+    /// this it would sit blank through a takeover that is already in progress.
+    fn resync(&self) -> Vec<Command> {
+        let machine = self.machine.lock().expect("machine lock");
+        match machine.state() {
+            // Armed has not taken the screen yet, so it looks the same as idle from here.
+            TurnState::Idle | TurnState::Armed { .. } => vec![Command::HideReader],
+            TurnState::Reading { .. } => vec![Command::ShowReader],
+            TurnState::Ready { alert, .. } => {
+                vec![Command::ShowReader, Command::ShowIndicator(*alert)]
+            }
+            TurnState::Gate { .. } => vec![Command::ShowReader, Command::StartQuiz],
+        }
     }
 
     /// Expires the grace window. Sleeps until the deadline rather than polling, and
@@ -229,16 +320,269 @@ async fn notify(State(daemon): State<Arc<Daemon>>, body: String) -> Response {
     StatusCode::NO_CONTENT.into_response()
 }
 
+fn sse(command: Command) -> Result<SseEvent, Infallible> {
+    Ok(SseEvent::default().data(describe_command(command)))
+}
+
+/// Streams commands to a reader surface.
+///
+/// This is the half that was missing: until now the machine decided to show the reader
+/// and nothing was listening.
+async fn events(
+    State(daemon): State<Arc<Daemon>>,
+) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
+    // Subscribe *before* reading the state, so a command issued between the two is queued
+    // rather than lost. The cost is a possible duplicate, and every command here is
+    // idempotent - which is the safe direction to err in.
+    let rx = daemon.commands.subscribe();
+    let initial = daemon.resync();
+
+    let live = BroadcastStream::new(rx).filter_map(|received| match received {
+        Ok(command) => Some(sse(command)),
+        // This surface fell more than COMMAND_BUFFER behind. Replaying the individual
+        // commands it missed is not worth it: reconnecting resyncs from the state, which
+        // is the truth anyway.
+        Err(_) => None,
+    });
+
+    Sse::new(tokio_stream::iter(initial).map(sse).chain(live)).keep_alive(KeepAlive::default())
+}
+
 /// The user asked to leave the reader.
 async fn exit_requested(State(daemon): State<Arc<Daemon>>) -> Json<Vec<&'static str>> {
     let commands = daemon.dispatch(Event::ExitRequested { at: daemon.now() });
     Json(commands.into_iter().map(describe_command).collect())
 }
 
-/// The quiz layer is done with the gate, however it ended.
-async fn gate_cleared(State(daemon): State<Arc<Daemon>>) -> Json<Vec<&'static str>> {
-    let commands = daemon.dispatch(Event::GateCleared { at: daemon.now() });
-    Json(commands.into_iter().map(describe_command).collect())
+/// The reader telling the daemon what it opened.
+///
+/// A page view can only be recorded against a book the store knows, so this has to happen
+/// before any reading is reported. That is deliberate: without it a typo in a book id
+/// would quietly become a second, untitled book, and a day's progress would split in two.
+async fn book(State(daemon): State<Arc<Daemon>>, Json(book): Json<Book>) -> Response {
+    match daemon.store.record_book(&book) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => store_error(error),
+    }
+}
+
+/// One page, read.
+///
+/// Whether it counted is decided here rather than by the reader. The surface measures
+/// dwell - only it knows about focus and visibility - but if it also classified, a window
+/// and a TUI could disagree about the same day.
+async fn page_view(State(daemon): State<Arc<Daemon>>, Json(view): Json<PageView>) -> Response {
+    let counted = view.counts(daemon.config.skim_threshold_ms);
+    match daemon.store.record_page_view(&view, counted) {
+        Ok(stored) => Json(PageViewReceipt { counted, stored }).into_response(),
+        Err(error) => store_error(error),
+    }
+}
+
+/// How the day is going.
+async fn progress(State(daemon): State<Arc<Daemon>>) -> Response {
+    match daemon.store.pages_read_today() {
+        Ok(pages_today) => Json(Progress {
+            pages_today,
+            goal: daemon.config.daily_page_goal,
+            met: pages_today >= daemon.config.daily_page_goal,
+        })
+        .into_response(),
+        Err(error) => store_error(error),
+    }
+}
+
+/// The gate as a surface sees it: the questions, the rules, and how many tries are left.
+#[derive(Serialize)]
+#[serde(tag = "gate", rename_all = "snake_case")]
+enum GateView {
+    Open { quiz_id: String, questions: Vec<AskedQuestion>, policy: Policy, attempts_left: u32 },
+    /// Nothing could be asked, so nothing is owed. See [`Release::Ungated`].
+    Released { reason: Release },
+}
+
+impl Daemon {
+    /// Builds the quiz for the open gate, or returns the one already being taken.
+    ///
+    /// Generation happens here rather than when the gate opens, so a slow or absent
+    /// generator delays only the questions and never the state change: the reader is on
+    /// screen either way.
+    async fn open_gate(self: &Arc<Self>) -> Option<GateView> {
+        let mode = self.gated_mode()?;
+
+        // A reader that reconnected mid-gate gets the quiz it was already taking, spent
+        // retries and all. Regenerating would hand out a fresh allowance.
+        if let Some(view) = self.gate_view() {
+            return Some(view);
+        }
+
+        let quiz = self.generate(mode).await;
+        let mut held = self.gate.lock().expect("gate lock");
+        // Two surfaces can ask at once; the first to finish generating wins, so the second
+        // does not replace a quiz that is already on someone's screen.
+        let gate = held.get_or_insert_with(|| Gate::open(mode, quiz));
+        Some(view_of(gate))
+    }
+
+    /// The mode a gate is currently owed under, if one is.
+    fn gated_mode(&self) -> Option<ReaderMode> {
+        let machine = self.machine.lock().expect("machine lock");
+        matches!(machine.state(), TurnState::Gate { .. }).then(|| machine.mode())
+    }
+
+    fn gate_view(&self) -> Option<GateView> {
+        self.gate.lock().expect("gate lock").as_ref().map(view_of)
+    }
+
+    /// Draws a quiz from the pages read since the reader took the screen.
+    ///
+    /// Every failure path here returns an empty quiz rather than an error. A generator
+    /// that is down, a database that will not read, a stretch with nothing counted: none
+    /// of those are the user's fault, and none of them may become a lock on their screen.
+    async fn generate(self: &Arc<Self>, mode: ReaderMode) -> Quiz {
+        let mut quiz = Quiz {
+            id: format!("gate-{}", self.gates_opened.fetch_add(1, Ordering::Relaxed)),
+            book_id: String::new(),
+            questions: Vec::new(),
+            generated_at: wall_clock_ms(),
+            pre_generated: false,
+        };
+
+        let wanted = self.config.questions_per_gate as usize;
+        if !Policy::for_mode(mode).quiz || wanted == 0 {
+            return quiz;
+        }
+
+        let since = self.reading_since.lock().expect("reading lock").unwrap_or(0);
+        let book_id = match self.store.latest_book_since(since) {
+            Ok(Some(book_id)) => book_id,
+            Ok(None) => {
+                self.note("gate: nothing was read in this stretch".to_string());
+                return quiz;
+            }
+            Err(error) => {
+                self.note(format!("gate: could not read history: {error}"));
+                return quiz;
+            }
+        };
+        quiz.book_id = book_id.clone();
+
+        let pages = match self.store.counted_pages_since(&book_id, since, GATE_PAGES) {
+            Ok(pages) => pages,
+            Err(error) => {
+                self.note(format!("gate: could not read pages: {error}"));
+                return quiz;
+            }
+        };
+
+        match self.questions.questions(&pages, wanted).await {
+            Ok(questions) => quiz.questions = questions,
+            Err(error) => self.note(format!("gate: {error}")),
+        }
+        quiz
+    }
+
+    /// Applies a verdict: a release ends the gate and gives the screen back.
+    fn settle(self: &Arc<Self>, verdict: Verdict) -> Verdict {
+        if matches!(verdict, Verdict::Released { .. }) {
+            *self.gate.lock().expect("gate lock") = None;
+            self.dispatch(Event::GateCleared { at: self.now() });
+        }
+        verdict
+    }
+}
+
+fn view_of(gate: &Gate) -> GateView {
+    // Nothing to ask means nothing to answer, and a gate that cannot be answered is a gate
+    // that cannot be opened. Say so plainly rather than showing an empty quiz.
+    if gate.quiz().questions.is_empty() {
+        return GateView::Released { reason: Release::Ungated };
+    }
+    GateView::Open {
+        quiz_id: gate.quiz().id.clone(),
+        questions: gate.quiz().for_display(),
+        policy: gate.policy(),
+        attempts_left: gate.attempts_left(),
+    }
+}
+
+/// The quiz for the gate that is currently open.
+async fn gate(State(daemon): State<Arc<Daemon>>) -> Response {
+    match daemon.open_gate().await {
+        Some(GateView::Released { reason }) => {
+            // Release on the way out, so a reader that only ever reads this endpoint still
+            // gets its screen back.
+            daemon.settle(Verdict::Released { reason, score: None });
+            Json(GateView::Released { reason }).into_response()
+        }
+        Some(view) => Json(view).into_response(),
+        None => (StatusCode::CONFLICT, "no gate is open").into_response(),
+    }
+}
+
+/// An answer sheet.
+async fn gate_answers(
+    State(daemon): State<Arc<Daemon>>,
+    Json(submission): Json<Submission>,
+) -> Response {
+    let verdict = {
+        let mut held = daemon.gate.lock().expect("gate lock");
+        match held.as_mut() {
+            Some(gate) => gate.submit(&submission),
+            None => return (StatusCode::CONFLICT, "no gate is open").into_response(),
+        }
+    };
+    Json(daemon.settle(verdict)).into_response()
+}
+
+/// "I would rather not." Whether that works is the mode's answer, not the button's.
+async fn gate_skip(State(daemon): State<Arc<Daemon>>) -> Response {
+    // Answered from the mode's policy rather than from the gate, so that pressing skip
+    // before the questions have arrived gets the same answer as pressing it after - and so
+    // that strict mode's refusal never waits on a generator.
+    let Some(mode) = daemon.gated_mode() else {
+        return (StatusCode::CONFLICT, "no gate is open").into_response();
+    };
+    Json(daemon.settle(Policy::for_mode(mode).skip())).into_response()
+}
+
+/// Wall-clock milliseconds. Only for things measured against a calendar; the grace window
+/// uses the monotonic clock instead, so that a clock change cannot misfire it.
+fn wall_clock_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as i64)
+}
+
+/// Separates "you sent something impossible" from "the database is broken".
+///
+/// A page view for an unregistered book is the caller's mistake and recoverable by
+/// registering it; anything else is ours, and saying 500 is the honest answer.
+fn store_error(error: rusqlite::Error) -> Response {
+    let violated_a_constraint = matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::ConstraintViolation)
+    );
+    if violated_a_constraint {
+        (StatusCode::CONFLICT, "unknown book: register it with POST /book first").into_response()
+    } else {
+        (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
+    }
+}
+
+/// What the daemon did with a reported page view.
+///
+/// `stored` is false for a retry of a view already recorded, which is not an error and
+/// should not make the reader try again.
+#[derive(Serialize)]
+struct PageViewReceipt {
+    counted: bool,
+    stored: bool,
+}
+
+#[derive(Serialize)]
+struct Progress {
+    pages_today: u32,
+    goal: u32,
+    met: bool,
 }
 
 async fn require_token(
@@ -267,8 +611,14 @@ pub fn router(daemon: Arc<Daemon>) -> Router {
         .route("/hook", post(hook))
         .route("/notify", post(notify))
         .route("/exit", post(exit_requested))
-        .route("/gate/cleared", post(gate_cleared))
+        .route("/gate", get(gate))
+        .route("/gate/answers", post(gate_answers))
+        .route("/gate/skip", post(gate_skip))
         .route("/state", get(state))
+        .route("/events", get(events))
+        .route("/book", post(book))
+        .route("/page-view", post(page_view))
+        .route("/progress", get(progress))
         // Applied last so it wraps every route above; a new route cannot be added
         // without inheriting authentication.
         .layer(middleware::from_fn_with_state(daemon.clone(), require_token))

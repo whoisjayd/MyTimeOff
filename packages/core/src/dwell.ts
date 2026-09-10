@@ -1,10 +1,15 @@
-import type { ClassifiedPageView, Locator } from "./types";
+import type { Locator, PageView } from "./types";
 
 export interface DwellTrackerOptions {
   /** Injectable clock so the tracker is testable without real time. */
   now: () => number;
-  /** Dwell below this is treated as a flip-past rather than a read. */
-  skimThresholdMs?: number;
+  /**
+   * Called as each page view closes.
+   *
+   * Reporting on close rather than at the end of a session means a crash, a killed
+   * window or a lost connection costs at most the page you were on.
+   */
+  onView?: (view: PageView) => void;
 }
 
 interface OpenView {
@@ -18,30 +23,31 @@ interface OpenView {
   visibleSince: number | null;
 }
 
-export const DEFAULT_SKIM_THRESHOLD_MS = 3000;
-
 /**
- * Turns raw page-change and visibility events into `ClassifiedPageView` records.
+ * Turns raw page-change and visibility events into `PageView` records.
  *
  * Dwell counts only time the reader was actually visible, so a window left open
- * overnight cannot inflate the daily goal, and pages flipped past faster than the
- * skim threshold are excluded from both the goal and the quiz span. Those two
- * rules are the whole anti-cheat story: flipping cannot earn progress, and it
- * cannot dodge questions either, because questions only come from counted pages.
+ * overnight cannot inflate the daily goal. That measurement has to happen here,
+ * because only a surface knows whether it is on screen and focused.
  *
- * Deliberately free of any DOM or terminal dependency so every reader surface
- * shares one definition of what counts as having read a page.
+ * What this deliberately does *not* do is decide whether a page counted. That is the
+ * daemon's call, against the threshold in the config - otherwise the window and a TUI
+ * could disagree about the same day, and the quiz could be drawn from pages the goal
+ * never counted.
+ *
+ * Free of any DOM or terminal dependency, so every reader surface shares one definition
+ * of how dwell is measured.
  */
 export class DwellTracker {
   private readonly nowFn: () => number;
-  private readonly skimThresholdMs: number;
-  private readonly completed: ClassifiedPageView[] = [];
+  private readonly onView?: (view: PageView) => void;
+  private readonly completed: PageView[] = [];
   private open: OpenView | null = null;
   private visible = true;
 
   constructor(options: DwellTrackerOptions) {
     this.nowFn = options.now;
-    this.skimThresholdMs = options.skimThresholdMs ?? DEFAULT_SKIM_THRESHOLD_MS;
+    this.onView = options.onView;
   }
 
   /** Closes the current page view, if any, and begins one for `locator`. */
@@ -78,27 +84,8 @@ export class DwellTracker {
     this.closeOpenView();
   }
 
-  get views(): readonly ClassifiedPageView[] {
+  get views(): readonly PageView[] {
     return this.completed;
-  }
-
-  /** Unique page labels that met the dwell threshold, in first-read order. */
-  countedPages(): string[] {
-    const seen = new Set<string>();
-    const labels: string[] = [];
-    for (const view of this.completed) {
-      if (!view.counted) continue;
-      const label = view.locator.pageLabel;
-      if (seen.has(label)) continue;
-      seen.add(label);
-      labels.push(label);
-    }
-    return labels;
-  }
-
-  /** The page views a quiz may draw from: counted pages only, in reading order. */
-  quizSpan(): ClassifiedPageView[] {
-    return this.completed.filter((view) => view.counted);
   }
 
   private visibleStretch(now: number): number {
@@ -111,15 +98,16 @@ export class DwellTracker {
     const now = this.nowFn();
     const dwellMs = this.open.accumulatedMs + this.visibleStretch(now);
 
-    this.completed.push({
+    const view: PageView = {
       bookId: this.open.bookId,
       locator: this.open.locator,
       text: this.open.text,
       enterTs: this.open.enterTs,
       exitTs: now,
       dwellMs,
-      counted: dwellMs >= this.skimThresholdMs,
-    });
+    };
     this.open = null;
+    this.completed.push(view);
+    this.onView?.(view);
   }
 }
