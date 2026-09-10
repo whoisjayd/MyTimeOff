@@ -21,6 +21,10 @@ const DEFAULT_DAILY_PAGE_GOAL: u32 = 20;
 const DEFAULT_SKIM_THRESHOLD_MS: u64 = 3_000;
 /// Questions asked at the gate. Short enough to answer from memory of what you just read.
 const DEFAULT_QUESTIONS_PER_GATE: u32 = 3;
+/// Asked for the gate's questions. The fast model on purpose: this runs while the reader
+/// is waiting to get back to work, and a better question is not worth twenty more seconds
+/// of standing at a closed gate.
+const DEFAULT_MODEL: &str = "claude-haiku-4-5-20251001";
 
 /// Every field is optional in the file and independently defaulted, so a config written
 /// by an older version keeps working when a field is added.
@@ -44,6 +48,12 @@ pub struct Config {
     /// Zero means the gate asks nothing, which releases immediately - the same effect as
     /// free mode, reached from the other direction.
     pub questions_per_gate: u32,
+    /// Which model writes the questions.
+    ///
+    /// Empty means none: the gate falls back to questions made on this machine, and no
+    /// page you read is ever sent anywhere. That is the whole of the privacy switch, and
+    /// it is one field because a second one would be a second thing to get wrong.
+    pub model: String,
 }
 
 impl Default for Config {
@@ -55,6 +65,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             skim_threshold_ms: DEFAULT_SKIM_THRESHOLD_MS,
             questions_per_gate: DEFAULT_QUESTIONS_PER_GATE,
+            model: DEFAULT_MODEL.to_string(),
         }
     }
 }
@@ -163,6 +174,13 @@ mod tests {
     fn zero_grace_is_allowed_and_means_take_the_screen_at_once() {
         let config = Config::parse(r#"{"grace_ms":0}"#).expect("zero grace");
         assert_eq!(config.grace(), Duration::ZERO);
+    }
+
+    #[test]
+    fn an_empty_model_is_allowed_and_means_ask_no_one() {
+        // The privacy switch. Refusing it would leave no way to keep the pages local.
+        let config = Config::parse(r#"{"model":""}"#).expect("no model");
+        assert!(config.model.is_empty());
     }
 
     #[test]

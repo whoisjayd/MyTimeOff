@@ -6,6 +6,7 @@
 
 pub mod paths;
 pub mod quiz;
+pub mod secret;
 pub mod settings;
 pub mod store;
 pub mod token;

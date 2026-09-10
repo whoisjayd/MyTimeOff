@@ -351,6 +351,50 @@ wrong ones really were not on that line — and it is deterministic, which is wh
 testable and also what makes it the wrong thing to ship. A quiz you can memorise is not a
 gate. Replacing it is step D.
 
+## Section 9 — Real questions (2026-09-11)
+
+The stub asks which word completes a line it shows you. That is eyesight, and it is
+memorisable: the same pages give the same quiz forever. Step D puts a model behind the
+`QuestionSource` trait so the gate can ask what a page *said*.
+
+**One line in `main.rs` changed, as promised in Section 8.** Nothing in `crates/core`
+moved, and nothing in the daemon's gate logic did either. That was the point of building
+the trait first, and it held.
+
+**The model never names its own source.** It is given the pages numbered 1..n and answers
+with those numbers; the `Locator` is looked up from the page the daemon actually sent. A
+model free to invent a locator could attribute a question to a page nobody read, and
+marking would then be against something that does not exist.
+
+**A bad question is dropped; a bad quiz is not fatal.** Answer index out of range,
+duplicate choices, empty prompt, a page number nobody sent: that entry goes and the rest
+of the quiz stands. `tool_choice` forces the structured call, so prose is not a parsing
+problem — but the validation assumes nothing about the model behaving.
+
+**Falling back is what keeps the gate a gate.** Section 8 says an empty quiz releases the
+reader, which is right when the tool has nothing to ask and wrong when the only thing that
+failed was a network. Left alone, that rule reads "close the laptop lid, get a free pass".
+So `Fallback` puts the offline stub behind the model: no key, no network, an API having a
+bad afternoon, and the reader still gets a quiz. A worse quiz — that is the honest cost —
+but not an open gate. An empty answer falls through too, though the trait calls it a
+normal result: empty from a generator means "nothing here to ask about", empty at the gate
+means "go on through", and those are not the same thing.
+
+**The key is in Windows Credential Manager, never in a file this project writes.** The
+config is written out on first run precisely so it can be pasted into a bug report; a key
+in there would be a key in a screenshot and a backup. `mytimeoff-daemon key` stores one
+from stdin, so it never reaches a shell history or a process list. `ANTHROPIC_API_KEY` is
+read as a fallback, because CI has no credential store, and it loses to a stored one.
+
+**`model = ""` is the privacy switch, and it is one field.** Everything the reader read
+goes to the API to make the questions; setting the model to nothing means it does not, and
+the offline stub makes the quiz instead. The daemon prints which of the two is in force at
+startup rather than leaving it to be inferred from the questions.
+
+**Haiku, on purpose.** This runs while the reader is standing at a closed gate waiting to
+get back to work. A better question is not worth twenty more seconds of that, and there is
+a 25-second timeout past which the stub takes over.
+
 ## Developer prerequisites (Windows)
 
 WebView2 runtime is already present on this machine. Required and currently missing:

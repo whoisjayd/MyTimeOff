@@ -13,7 +13,7 @@
 
 use mytimeoff_core::Question;
 
-use super::{Page, Questions, QuestionSource};
+use super::{Page, QuestionSource, Questions, hash};
 
 /// Choices per question, including the right one.
 const CHOICES: usize = 4;
@@ -135,17 +135,6 @@ fn distinctive_words(sentence: &str) -> Vec<&str> {
 /// Strips the punctuation a word carries, so "chapter," and "chapter" are one word.
 fn trim_word(word: &str) -> &str {
     word.trim_matches(|c: char| !c.is_alphanumeric())
-}
-
-/// FNV-1a. Wanted here for being short, stable across runs and platforms, and completely
-/// unrelated to security - which `DefaultHasher`, seeded per process, is not.
-fn hash(text: &str) -> u32 {
-    let mut hash: u32 = 0x811c_9dc5;
-    for byte in text.as_bytes() {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    hash
 }
 
 #[cfg(test)]
