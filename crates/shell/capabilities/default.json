@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Nothing. The reader talks to the daemon over HTTP through the bridge, not over Tauri's IPC, so this window is granted no commands at all.",
+  "windows": ["reader"],
+  "permissions": []
+}
