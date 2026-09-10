@@ -198,6 +198,27 @@ Claude Code reads hook configuration at startup, so the agent session must be re
 after the settings file is written. A session that was already running when the file
 appeared will not deliver anything.
 
+### What the first live test found (2026-09-11)
+
+Hooks from a real Claude Code session were delivered and acted on — the first time
+anything but a hand-sent payload has driven the machine.
+
+It also exposed a bug no unit test could have caught, because every test started from
+idle: `AgentStart` was only handled from `State::Idle`, so once a turn finished and the
+indicator went up, the machine wedged in `Ready` and ignored every later prompt. Observed
+as forty consecutive one-second samples of `ready` across an actively running turn. In
+real use the tool would have worked exactly once per session.
+
+`Ready + AgentStart` now returns to `Reading` and clears the indicator, with **no new
+grace window**: grace exists to avoid *switching* for a turn too short to be worth it, and
+that switch has already been paid for. Re-arming would strand you on the terminal for 20s
+with the reader still up behind it.
+
+The same test showed why `issued` is not enough to debug wiring: a hook that never arrives
+and a hook that arrives and is correctly ignored look identical from outside. `GET /state`
+now also reports `received` — every delivery, its `notification_type`, and the event it
+mapped to (or `ignored`). The watcher prints those as they land.
+
 ## Developer prerequisites (Windows)
 
 WebView2 runtime is already present on this machine. Required and currently missing:

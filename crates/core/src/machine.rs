@@ -199,6 +199,23 @@ impl Machine {
                 Vec::new()
             }
 
+            // You read the indicator, went back to the terminal and set the agent going
+            // again without leaving the reader. Straight back to reading, and drop the
+            // indicator - it is answering a turn that is over.
+            //
+            // Deliberately no new grace window: grace exists to avoid *switching* for a
+            // turn too short to be worth it, and that switch has already been paid for.
+            // Re-arming here would strand you on the terminal for 20s with the reader
+            // still up behind it.
+            (State::Ready { session, .. }, Event::AgentStart { at, .. }) => {
+                self.state = State::Reading { session: session.clone(), since: at };
+                vec![Command::ClearIndicator]
+            }
+
+            // Already reading, and a turn is already running. A second prompt (queued, or
+            // typed while reading) changes nothing.
+            (State::Reading { .. }, Event::AgentStart { .. }) => Vec::new(),
+
             // Leaving while the turn is still running is allowed; the gate applies either
             // way, so an early exit cannot dodge the toll.
             (
@@ -245,6 +262,68 @@ mod tests {
         start(m, 0);
         m.handle(Event::Tick { at: GRACE });
         assert!(matches!(m.state(), State::Reading { .. }));
+    }
+
+    /// Regression: found by a live agent, not by a test. The machine only armed from
+    /// Idle, so once a turn finished and the indicator was up, every later prompt fell
+    /// through to the catch-all and the machine wedged in Ready forever. Observed as 40
+    /// consecutive samples of `ready` across an active turn.
+    #[test]
+    fn a_new_prompt_while_the_indicator_is_up_returns_to_reading() {
+        let mut m = machine();
+        reading(&mut m);
+        m.handle(Event::AgentDone { session: "s1".into(), at: GRACE + 1 });
+        assert!(matches!(m.state(), State::Ready { .. }));
+
+        let cmds = start(&mut m, GRACE + 500);
+        assert_eq!(cmds, vec![Command::ClearIndicator], "the indicator answers a finished turn");
+        assert!(matches!(m.state(), State::Reading { .. }), "{:?}", m.state());
+    }
+
+    #[test]
+    fn returning_to_reading_does_not_re_arm_a_grace_window() {
+        let mut m = machine();
+        reading(&mut m);
+        m.handle(Event::AgentDone { session: "s1".into(), at: GRACE + 1 });
+        start(&mut m, GRACE + 500);
+        assert_eq!(
+            m.next_deadline(),
+            None,
+            "the screen is already taken, so there is nothing left for grace to protect"
+        );
+    }
+
+    #[test]
+    fn a_loud_indicator_is_also_cleared_by_a_new_prompt() {
+        let mut m = machine();
+        reading(&mut m);
+        m.handle(Event::AgentNeedsInput { session: "s1".into(), at: GRACE + 1 });
+        assert!(matches!(m.state(), State::Ready { alert: Alert::NeedsInput, .. }));
+
+        // Answering the prompt is exactly what a new turn means, so the alert is stale.
+        let cmds = start(&mut m, GRACE + 500);
+        assert_eq!(cmds, vec![Command::ClearIndicator]);
+        assert!(matches!(m.state(), State::Reading { .. }));
+    }
+
+    #[test]
+    fn a_second_prompt_while_reading_changes_nothing() {
+        let mut m = machine();
+        reading(&mut m);
+        let before = m.state().clone();
+        assert!(start(&mut m, GRACE + 500).is_empty());
+        assert_eq!(m.state(), &before);
+    }
+
+    #[test]
+    fn a_new_prompt_does_not_dodge_the_gate() {
+        let mut m = machine();
+        reading(&mut m);
+        m.handle(Event::ExitRequested { at: GRACE + 1 });
+        assert!(matches!(m.state(), State::Gate { .. }), "{:?}", m.state());
+
+        assert!(start(&mut m, GRACE + 500).is_empty(), "the toll is already owed");
+        assert!(matches!(m.state(), State::Gate { .. }));
     }
 
     #[test]
