@@ -50,6 +50,13 @@ pub struct Config {
     pub questions_per_gate: u32,
     /// Which model writes the questions.
     ///
+    /// The name says who is asked as well as what is asked: `claude-*` goes to Anthropic,
+    /// `gemini-*` to Google, and the daemon keeps a separate API key for each. There is
+    /// deliberately no second field naming the provider - it could disagree with this one,
+    /// and a config that reads perfectly and cannot work is worse than no choice at all.
+    /// A name matching neither family stops the daemon with a message rather than quietly
+    /// falling back.
+    ///
     /// Empty means none: the gate falls back to questions made on this machine, and no
     /// page you read is ever sent anywhere. That is the whole of the privacy switch, and
     /// it is one field because a second one would be a second thing to get wrong.

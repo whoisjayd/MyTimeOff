@@ -395,6 +395,124 @@ startup rather than leaving it to be inferred from the questions.
 get back to work. A better question is not worth twenty more seconds of that, and there is
 a 25-second timeout past which the stub takes over.
 
+## Section 10 — A second provider (2026-09-11)
+
+Gemini writes the questions too, chosen by the model name. What follows is why it is
+shaped this way, since almost none of it was forced.
+
+**The model name is the only knob, and it names the vendor as well as the model.**
+`claude-*` goes to Anthropic, `gemini-*` to Google. The obvious alternative — a `provider`
+field beside `model` — was rejected because the two can disagree, and
+`model = "gemini-3.5-flash"` with `provider = "anthropic"` is a config that reads
+perfectly and cannot work. The config file already says a second field is a second thing
+to get wrong; this is that argument applied again.
+
+**A model name matching neither family stops the daemon.** Everything else in this feature
+degrades quietly and on purpose: no key, no network, a bad reply — all fall through to the
+offline stub. A typo in the model name must not, because it is indistinguishable from
+working. `model = "gpt-5"` now refuses to start and says which prefixes it knows. The
+config already refuses a mistyped *key* outright, so this is consistent rather than new.
+
+**One credential per provider, never shared.** `MyTimeOff/anthropic-api-key` and
+`MyTimeOff/gemini-api-key`, with `GEMINI_API_KEY` or `GOOGLE_API_KEY` as the environment
+fallback for the second — both, because Google's own libraries read either and a machine
+already set up for one should not need a third copy. A shared credential name would mean
+storing one key silently destroys the other, which is a puzzling way to lose something you
+cannot read back.
+
+**The brief is shared; only the envelope differs.** `quiz/writing.rs` holds what a good
+question is, how pages are presented, the schema asked for, and the checking of what comes
+back. `claude.rs` and `gemini.rs` hold an address, a header, a request body and a way to
+find the answer in a reply — which is genuinely all that differs between them. The reason
+is not tidiness: a second copy of the checker is a second place for the answer-index bound
+to be wrong, and that bound is the difference between marking a quiz and panicking in the
+middle of one.
+
+**Google's structured output arrives as text, not as a tool call.** Anthropic's forced
+tool call hands back an object; Gemini's `response_format` hands back a string that
+contains JSON, possibly split across parts, nested under
+`steps[] → model_output → content[] → text`. Those parts are joined in order and parsed
+once. The reply is read leniently — any text part will do if the step type has moved —
+because reading loosely is safe here in a way writing loosely is not: whatever comes out
+still has to survive the same checker before it can become a question.
+
+**The instructions travel in `input`, not in `system_instruction`.** That field exists,
+but whether its value is a bare string or a `Content` object appears in none of the
+examples available, and this is the one place where a guess fails silently rather than
+loudly. Prepending the rules to the pages costs a couple of hundred tokens and cannot be
+shaped wrongly.
+
+**What the live API confirmed without a key, and what it could not.** Two of Google's own
+pages disagree about the version, so both were tried: `v1beta/interactions` answers 400
+and `v1beta2/interactions` answers 404, as does every deliberately misspelt variant — so
+the path is settled by evidence rather than by picking a doc. The 400 is `API_KEY_INVALID`,
+which is a key being read and rejected, so the header is the right channel. The body's
+field names remain unverified and cannot be verified without a valid key: the API checks
+the key before the body, so a request carrying an invented field name comes back with the
+same key error.
+
+**`mytimeoff-daemon check` exists because of exactly that.** A wrong field, a retired
+model, a bad key: none of them stop the daemon. They make every gate fall through to the
+stub, and the only symptom is that the questions are worse than they should be — forever,
+with a config that looks right. `check` asks the configured provider for questions about
+two invented pages and prints them, deliberately *without* the fallback, since the
+fallback's whole job is to hide this failure from the reader. It turns an invisible
+misconfiguration into one printed message at setup time.
+
+## Section 11 — The window (2026-09-11)
+
+The desktop shell was built last on purpose. Everything above it decides *when* the screen
+is taken; this decides *how*, and it was worth knowing whether that could be added without
+disturbing anything already working. It could: `crates/shell` is entirely new files.
+`crates/core`, `crates/daemon`, `packages/core` and `apps/reader` are untouched by it.
+
+**The shell serves the reader to itself over loopback.** This is the one decision the rest
+follows from. In development Vite serves the page and proxies `/daemon/*` onward with an
+`Authorization` header attached, so the page calls the daemon same-origin and never holds
+the token. Production has no Vite. The shell stands up the same shape instead: one
+loopback origin, Tauri's own embedded assets on one side of it, a token-attaching
+streaming proxy to the daemon on the other. Three alternatives were rejected. Giving the
+page an absolute daemon URL and the token to go with it puts a bearer token in a webview,
+one XSS from handing the daemon to someone else. Having the daemon serve the reader moves
+a UI concern into the daemon and destroys the thing this step exists to demonstrate. An
+`invoke()` transport bridge changes `daemon-client.ts`, makes SSE awkward, and forks the
+reader into a browser build and a desktop build.
+
+**The shell reads its own `/events` through its own bridge.** It holds the token and could
+go straight to the daemon. Going through the bridge keeps the token in exactly one place,
+and makes a broken bridge stop the takeover visibly rather than leaving a window that
+raises itself over a reader that cannot load.
+
+**The bridge decides asset misses itself.** `AssetResolver::get` answers *every* unknown
+path with `index.html`, so a request for a script that did not make it into the build
+comes back as 200 of HTML and the browser reports a syntax error in a file that is fine.
+The set of embedded names is read once at startup; a path that names a file gets that file
+or a 404, and only a path that names no file at all is treated as a route into the app.
+This was found by testing rather than reasoning: the guard written to prevent it was dead
+code, because `get` never returned `None`.
+
+**The window handles two of the six commands.** `show_reader` and `hide_reader`. The other
+four describe what is drawn *inside* the window, which is the page's business. Both
+surfaces subscribe to `/events` directly and agree because they obey the same sentence,
+not because one relays it to the other. An unrecognised command is ignored, for the reason
+`parseCommand` gives on the other side.
+
+**Raising takes both always-on-top and focus.** Windows refuses focus steals from
+background processes, and a window that is merely on top without focus swallows the first
+keypress. On-top is set first, so a refused focus request still leaves the reader visible.
+Releasing drops on-top *before* hiding: a hidden window still marked on-top comes back
+on-top the next time anything shows it, including the user opening the reader
+voluntarily.
+
+**The window opens hidden.** Starting visible would make every reboot an interruption.
+
+Verified end to end against an isolated daemon: the reader loads unmodified in the window
+and holds its own `/events` stream through the bridge; a forged `Authorization` from the
+page is stripped and replaced; a request the page makes with no token reaches the daemon,
+and the same request straight at the daemon is a 401. Across a real turn the window went
+hidden → visible, always-on-top and focused on `show_reader`, stayed up through
+`indicator_done`, and went back to hidden with on-top cleared on `hide_reader`.
+
 ## Developer prerequisites (Windows)
 
 WebView2 runtime is already present on this machine. Required and currently missing:

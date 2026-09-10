@@ -7,32 +7,39 @@
 //! there and nowhere else.
 //!
 //! The environment is honoured as a second place to look, because it is how every other
-//! Anthropic tool is configured and because CI has no credential store. It is a fallback,
-//! not the preferred home: a deliberately stored credential wins over an inherited one.
+//! tool for these APIs is configured and because CI has no credential store. It is a
+//! fallback, not the preferred home: a deliberately stored credential wins over an
+//! inherited one.
+//!
+//! Which name belongs to which provider is not decided here - `quiz::Provider` owns that,
+//! and this module only knows how to look a name up.
 
 use std::env;
 use std::io;
 
-/// The credential's name in the store. Prefixed, because the store is machine-wide and
-/// a bare "anthropic" would be a landmine for anything else the user installs.
-pub const API_KEY: &str = "MyTimeOff/anthropic-api-key";
+/// The credentials' names in the store. Prefixed, because the store is machine-wide and a
+/// bare "anthropic" would be a landmine for anything else the user installs. One name per
+/// provider, so a machine can hold both and storing one never destroys the other.
+pub const ANTHROPIC_KEY: &str = "MyTimeOff/anthropic-api-key";
+pub const GEMINI_KEY: &str = "MyTimeOff/gemini-api-key";
 
-/// The variable checked when the store has nothing, named to match every other tool.
-const API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
-
-/// The key, from the credential store or the environment, or None if there is neither.
+/// A key, from the credential store or the environment, or None if there is neither.
 ///
 /// A missing key is not an error. It is a working install that makes its own questions
 /// offline, and the daemon says so at startup rather than failing to start.
-pub fn api_key() -> Option<String> {
-    match read(API_KEY) {
+pub fn find(target: &str, variables: &[&str]) -> Option<String> {
+    match read(target) {
         Ok(Some(key)) => return Some(key),
         Ok(None) => {}
         // Reported rather than propagated: a credential store that will not answer is a
         // reason to fall back, not a reason to refuse to run.
         Err(error) => eprintln!("credential store: {error}"),
     }
-    env::var(API_KEY_ENV).ok().map(|key| key.trim().to_string()).filter(|key| !key.is_empty())
+    variables
+        .iter()
+        .filter_map(|name| env::var(name).ok())
+        .map(|key| key.trim().to_string())
+        .find(|key| !key.is_empty())
 }
 
 /// Reads one generic credential by name.
@@ -174,7 +181,7 @@ mod platform {
     pub fn write(_target: &str, _secret: &str) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            format!("no credential store here; set {} instead", super::API_KEY_ENV),
+            "no credential store here; set the API key in the environment instead",
         ))
     }
 
@@ -230,6 +237,14 @@ mod tests {
         delete(&target).expect("delete");
         assert_eq!(read(&target).expect("read after delete"), None);
         delete(&target).expect("deleting nothing is not an error");
+    }
+
+    #[test]
+    fn a_name_nothing_has_stored_and_nothing_exports_is_simply_absent() {
+        // Read-only on purpose: the variables are made up so no machine's real setup can
+        // make this pass or fail, and nothing here writes to the store.
+        let target = format!("MyTimeOff/absent-{}", std::process::id());
+        assert_eq!(find(&target, &["MYTIMEOFF_NO_SUCH_KEY_A", "MYTIMEOFF_NO_SUCH_KEY_B"]), None);
     }
 
     #[test]

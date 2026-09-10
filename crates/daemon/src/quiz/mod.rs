@@ -7,12 +7,16 @@
 //! generator be swapped without the gate noticing.
 
 pub mod claude;
+pub mod gemini;
 pub mod stub;
+pub mod writing;
 
 use std::fmt;
 use std::sync::Arc;
 
 use mytimeoff_core::{Locator, Question};
+
+use crate::secret;
 
 /// One page as a question source sees it: where it was, and what it said.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +60,107 @@ pub trait QuestionSource: Send + Sync {
 pub type Questions<'a> = std::pin::Pin<
     Box<dyn std::future::Future<Output = Result<Vec<Question>, SourceError>> + Send + 'a>,
 >;
+
+/// Who to ask, worked out from the model name.
+///
+/// There is no `provider` field in the config, and adding one would be adding a second
+/// thing to get wrong: `model = "gemini-3.5-flash"` with `provider = "anthropic"` is a
+/// configuration that reads perfectly and cannot work. The model name already says which
+/// family it belongs to, so it is the only thing asked for.
+///
+/// The cost is a name that fits no prefix, and that is refused at startup with a message
+/// rather than guessed at - a guess would mean every gate quietly falling back to the
+/// offline stub while the config looks right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    Anthropic,
+    Google,
+}
+
+impl Provider {
+    /// The family a model name belongs to, or None if it names nobody known.
+    pub fn for_model(model: &str) -> Option<Self> {
+        if model.starts_with(claude::PREFIX) {
+            Some(Provider::Anthropic)
+        } else if model.starts_with(gemini::PREFIX) {
+            Some(Provider::Google)
+        } else {
+            None
+        }
+    }
+
+    /// The name a person would type at the command line: `mytimeoff-daemon key gemini`.
+    pub fn from_word(word: &str) -> Option<Self> {
+        match word.trim().to_ascii_lowercase().as_str() {
+            "claude" | "anthropic" => Some(Provider::Anthropic),
+            "gemini" | "google" => Some(Provider::Google),
+            _ => None,
+        }
+    }
+
+    pub fn word(self) -> &'static str {
+        match self {
+            Provider::Anthropic => "claude",
+            Provider::Google => "gemini",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Provider::Anthropic => "Anthropic",
+            Provider::Google => "Google",
+        }
+    }
+
+    /// Model names that reach this provider, for a message that has to explain a config
+    /// that named nobody.
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Provider::Anthropic => claude::PREFIX,
+            Provider::Google => gemini::PREFIX,
+        }
+    }
+
+    pub const ALL: [Provider; 2] = [Provider::Anthropic, Provider::Google];
+
+    /// Where this provider's key is kept. Separate names, because a machine may well have
+    /// both and overwriting one with the other would be a puzzling way to lose a key.
+    pub fn credential(self) -> &'static str {
+        match self {
+            Provider::Anthropic => secret::ANTHROPIC_KEY,
+            Provider::Google => secret::GEMINI_KEY,
+        }
+    }
+
+    /// The variables checked when the store has nothing, named to match what every other
+    /// tool for that provider already reads.
+    pub fn env(self) -> &'static [&'static str] {
+        match self {
+            Provider::Anthropic => &["ANTHROPIC_API_KEY"],
+            // Google's own libraries read either, and a machine set up for one of them
+            // should not need a third copy of the same key.
+            Provider::Google => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        }
+    }
+
+    /// The key, from the credential store or the environment, or None if there is neither.
+    pub fn key(self) -> Option<String> {
+        secret::find(self.credential(), self.env())
+    }
+
+    pub fn source(self, key: String, model: String) -> Result<Arc<dyn QuestionSource>, SourceError> {
+        Ok(match self {
+            Provider::Anthropic => Arc::new(claude::Claude::new(key, model)?),
+            Provider::Google => Arc::new(gemini::Gemini::new(key, model)?),
+        })
+    }
+}
+
+impl fmt::Display for Provider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
 
 /// One source, with another behind it.
 ///
@@ -178,6 +283,42 @@ mod tests {
             Poll::Ready(answer) => answer,
             Poll::Pending => panic!("these sources do not wait on anything"),
         }
+    }
+
+    #[test]
+    fn a_model_name_says_who_to_ask() {
+        assert_eq!(Provider::for_model("claude-haiku-4-5-20251001"), Some(Provider::Anthropic));
+        assert_eq!(Provider::for_model("gemini-3.5-flash"), Some(Provider::Google));
+    }
+
+    #[test]
+    fn a_model_name_nobody_answers_for_is_refused_rather_than_guessed_at() {
+        // Guessing would mean a config that reads perfectly and quietly falls back to the
+        // offline stub at every gate, forever.
+        assert_eq!(Provider::for_model("gpt-5"), None);
+        assert_eq!(Provider::for_model("haiku"), None, "the family prefix is the whole signal");
+        assert_eq!(Provider::for_model(""), None);
+    }
+
+    #[test]
+    fn the_two_providers_do_not_share_a_credential_or_a_variable() {
+        // Sharing either would mean storing one key silently destroys the other.
+        assert_ne!(Provider::Anthropic.credential(), Provider::Google.credential());
+        for theirs in Provider::Google.env() {
+            assert!(!Provider::Anthropic.env().contains(theirs), "{theirs}");
+        }
+    }
+
+    #[test]
+    fn every_provider_can_be_named_at_the_command_line_and_read_back() {
+        for provider in Provider::ALL {
+            assert_eq!(Provider::from_word(provider.word()), Some(provider));
+            assert_eq!(Provider::from_word(&provider.word().to_uppercase()), Some(provider));
+            // And its own prefix routes to it, which is what pairs `key <word>` with a
+            // model name in the config.
+            assert_eq!(Provider::for_model(&format!("{}x", provider.prefix())), Some(provider));
+        }
+        assert_eq!(Provider::from_word("openai"), None);
     }
 
     #[test]
