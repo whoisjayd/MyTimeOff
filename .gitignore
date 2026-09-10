@@ -6,6 +6,5 @@ target/
 .env
 .env.*
 !.env.example
-src-core/target/
 .omc/
 fixtures/

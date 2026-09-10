@@ -1,0 +1,8 @@
+[package]
+name = "mytimeoff-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Agent-turn state machine for MyTimeOff"
+
+[dependencies]
