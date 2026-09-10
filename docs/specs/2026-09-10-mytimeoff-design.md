@@ -513,6 +513,53 @@ and the same request straight at the daemon is a 401. Across a real turn the win
 hidden → visible, always-on-top and focused on `show_reader`, stayed up through
 `indicator_done`, and went back to hidden with on-top cleared on `hide_reader`.
 
+## Section 12 — Coming back after a reboot (2026-09-11)
+
+A tool that only works until the next sign-in is a tool nobody keeps. This is the whole of
+what makes MyTimeOff survive one, and it is one registry value.
+
+**The login item is the window, not the daemon.** Windows starts login items by running a
+command line, and a command line pointing at a console program opens a console window at
+every sign-in and leaves it sitting there. There is no flag on a `Run` entry that hides
+it. The daemon is a console program; the shell is a GUI program with no console. So the
+thing registered is `mytimeoff-shell.exe`, and the shell brings the daemon with it.
+
+**The shell hosts the daemon in-process** (`crates/shell/src/host.rs`). The alternative was
+spawning the daemon's exe as a child. In-process won because the shell already links the
+daemon as a library and already reads its config and its token: hosting adds no dependency,
+no path to guess, no window flag to remember, and no child to orphan if the window dies
+badly. What it does not do is take any of the daemon's decisions — `serve` is still the
+daemon's own function over the daemon's own router.
+
+**The bind is the question and the answer.** `host::ensure` does not health-check first and
+then bind; asking "is something already there?" and then binding leaves a gap between the
+question and the answer. It binds. `AddrInUse` means a daemon is already running — started
+in a terminal, or by an earlier copy of this window — and it is left alone. Two daemons on
+one port is therefore not a state this can reach.
+
+**"Is it on?" is two questions.** The `Run` value can exist while Task Manager's Startup
+apps switch says no; that switch lives in a separate key,
+`…\Explorer\StartupApproved\Run`, as a 12-byte record whose first bit means disabled.
+A record that is absent means enabled — the key does not exist at all until something has
+been switched off once. `mytimeoff-daemon autostart status` reports that third state
+explicitly ("registered but switched off in Task Manager") rather than saying "on" and
+lying about the next reboot, or saying "off" and hiding an entry still sitting in the
+registry. `autostart on` clears a stale refusal so it means what it says.
+
+**`autostart.rs` is shaped like `secret.rs`:** mechanism here, policy in the caller. It
+knows how to read, write and delete a named login item; it does not know that the item is
+called MyTimeOff or that it points at the reader. `main.rs` holds both of those, along with
+the refusal to register anything when no `mytimeoff-shell.exe` sits beside the daemon —
+an autostart that opens a console window and no reader is worse than none.
+
+Verified against the real registry and a real sign-in path: `autostart on` wrote a
+correctly quoted value confirmed by an independent `reg query`; a hand-planted `03`
+approval record was reported as switched-off and cleared by `autostart on`; the launched
+shell held both the daemon port and the bridge port in one process and answered `/state`,
+`/daemon/state` and the reader on all three; a second shell instance printed "daemon
+already running" and moved its bridge to another port; a hook delivery through the hosted
+daemon took the screen (visible, topmost, foreground); `autostart off` removed both values.
+
 ## Developer prerequisites (Windows)
 
 WebView2 runtime is already present on this machine. Required and currently missing:

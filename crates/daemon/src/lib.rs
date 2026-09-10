@@ -4,6 +4,7 @@
 //! All the rules live in `mytimeoff-core`. This crate only supplies the things the core
 //! deliberately refuses to know about: a socket, a clock, and a token.
 
+pub mod autostart;
 pub mod paths;
 pub mod quiz;
 pub mod secret;

@@ -10,10 +10,15 @@
 //! same commands, and does the one thing with them that a page cannot. If this file ever
 //! starts deciding *when* to take the screen rather than *how*, the decision has escaped
 //! the state machine and belongs back in `crates/core`.
+//!
+//! It does run the daemon inside itself, which looks like an exception and is not: it
+//! calls the daemon's own `serve` over the daemon's own router and decides nothing about
+//! what that server does. `host.rs` explains why autostart leaves no other option.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bridge;
+mod host;
 mod takeover;
 
 use std::io;
@@ -30,6 +35,19 @@ fn main() {
             // wrong.
             let config = settings::load_or_create(&paths::config()?)?;
             let secret = token::load_or_create(&paths::token()?)?;
+
+            // Before the bridge, because the bridge is only useful pointed at a daemon.
+            // Whether that daemon is this process or one already running is decided here
+            // and nowhere else.
+            match tauri::async_runtime::block_on(host::ensure(&config, &secret))? {
+                host::Host::Hosted(note) => {
+                    println!("daemon hosted here on 127.0.0.1:{}", config.port);
+                    println!("quiz:   {note}");
+                }
+                host::Host::Already => {
+                    println!("daemon already running on 127.0.0.1:{}", config.port);
+                }
+            }
 
             let assets = app.handle().asset_resolver();
             let addr =

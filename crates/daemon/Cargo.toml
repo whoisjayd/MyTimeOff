@@ -16,8 +16,12 @@ serde_json = "1.0.151"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "time", "net", "io-util"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 
-# Only the credential store, and only where there is one.
+# The credential store and the startup list, and only where there are ones.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security_Credentials",
+    "Win32_System_Registry",
+] }
 
 [dev-dependencies]

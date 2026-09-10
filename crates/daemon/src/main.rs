@@ -1,11 +1,9 @@
 use std::io::{self, Read};
-use std::sync::Arc;
 
-use mytimeoff_core::{Config, Locator};
-use mytimeoff_daemon::quiz::stub::Stub;
-use mytimeoff_daemon::quiz::{Fallback, Page, Provider, QuestionSource};
+use mytimeoff_core::Locator;
+use mytimeoff_daemon::quiz::{self, Page, Provider};
 use mytimeoff_daemon::store::Store;
-use mytimeoff_daemon::{Daemon, bind, paths, secret, serve, settings, token};
+use mytimeoff_daemon::{Daemon, autostart, bind, paths, secret, serve, settings, token};
 
 #[tokio::main]
 async fn main() {
@@ -25,6 +23,7 @@ async fn run() -> io::Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("key") => return store_key(word.as_deref()),
         Some("check") => return check().await,
+        Some("autostart") => return autostart_command(word.as_deref()),
         _ => {}
     }
 
@@ -45,7 +44,8 @@ async fn run() -> io::Result<()> {
     println!("config: {}", config_path.display());
     println!("token:  {}", token_path.display());
     println!("books:  {}", database_path.display());
-    let questions = question_source(&config)?;
+    let (questions, note) = quiz::source_for(&config).map_err(invalid)?;
+    println!("quiz:   {note}");
     println!();
     println!("Wire Claude Code by adding to .claude/settings.json:");
     println!(
@@ -60,60 +60,6 @@ async fn run() -> io::Result<()> {
 
     let daemon = Daemon::new(config, store, secret, questions);
     serve(listener, daemon).await
-}
-
-/// Picks who writes the questions, and says so out loud.
-///
-/// Out loud because the two things a user most needs to know about this feature are
-/// invisible otherwise: that pages are leaving the machine, or that they are not and the
-/// questions are the weak offline ones. Neither should have to be inferred from the quiz.
-fn question_source(config: &Config) -> io::Result<Arc<dyn QuestionSource>> {
-    let offline: Arc<dyn QuestionSource> = Arc::new(Stub);
-    if config.model.is_empty() {
-        println!("quiz:   offline (model is empty; nothing you read leaves this machine)");
-        return Ok(offline);
-    }
-
-    // A name that belongs to nobody is refused rather than guessed at. Every other outcome
-    // here is a working daemon, so a typo would otherwise mean quietly using the offline
-    // questions forever while the config looks exactly right.
-    let Some(provider) = Provider::for_model(&config.model) else {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, unknown_model(&config.model)));
-    };
-
-    let Some(key) = provider.key() else {
-        println!("quiz:   offline (no {} API key stored)", provider);
-        println!("        store one with:  mytimeoff-daemon key {}", provider.word());
-        return Ok(offline);
-    };
-
-    match provider.source(key, config.model.clone()) {
-        Ok(source) => {
-            println!(
-                "quiz:   {} via {} (the pages you read are sent to write the questions)",
-                config.model, provider,
-            );
-            // Behind it, the offline stub. A gate with no questions lets the reader
-            // through, so a dropped connection would otherwise be a free pass.
-            Ok(Arc::new(Fallback::new(source, offline, |note| eprintln!("{note}"))))
-        }
-        Err(error) => {
-            println!("quiz:   offline ({error})");
-            Ok(offline)
-        }
-    }
-}
-
-fn unknown_model(model: &str) -> String {
-    let families = Provider::ALL
-        .iter()
-        .map(|provider| format!("{}* ({})", provider.prefix(), provider))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "model \"{model}\" names no provider I can reach. Expected one of: {families}. \
-         Set model to \"\" to make the questions on this machine instead."
-    )
 }
 
 /// `mytimeoff-daemon check` - asks the configured provider for questions about two made-up
@@ -134,7 +80,7 @@ async fn check() -> io::Result<()> {
         return Ok(());
     }
     let Some(provider) = Provider::for_model(&config.model) else {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, unknown_model(&config.model)));
+        return Err(invalid(quiz::unknown_model(&config.model)));
     };
     let Some(key) = provider.key() else {
         return Err(io::Error::new(
@@ -217,9 +163,8 @@ fn store_key(word: Option<&str>) -> io::Result<()> {
         })?,
         None => {
             let config = settings::load_or_create(&paths::config()?)?;
-            Provider::for_model(&config.model).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, unknown_model(&config.model))
-            })?
+            Provider::for_model(&config.model)
+                .ok_or_else(|| invalid(quiz::unknown_model(&config.model)))?
         }
     };
 
@@ -241,4 +186,94 @@ fn store_key(word: Option<&str>) -> io::Result<()> {
     println!("Stored (…{tail}) for {provider}. Restart the daemon to use it.");
     println!("Check it works with:  mytimeoff-daemon check");
     Ok(())
+}
+
+/// The name the entry appears under in Task Manager's Startup apps tab.
+///
+/// It is what a stranger to this code sees beside the switch that turns it off, so it is
+/// the product's name and not a binary's.
+const LOGIN_ITEM: &str = "MyTimeOff";
+
+/// `mytimeoff-daemon autostart [on|off]` - whether MyTimeOff comes back after a reboot.
+///
+/// What gets registered is the reader window, not this daemon, and the reason is a console
+/// window: a `Run` entry pointing at a console program opens one at every sign-in and
+/// leaves it open. The window is a GUI program with no console, and it starts the daemon
+/// inside itself, so one entry brings back both halves and none of it is visible.
+///
+/// With no word it reports rather than changes anything, because "is this on?" is the
+/// question someone asks first and it should not be dangerous to ask.
+fn autostart_command(word: Option<&str>) -> io::Result<()> {
+    match word {
+        None | Some("status") => report_autostart(),
+        Some("on") => {
+            let reader = reader_exe()?;
+            autostart::enable(LOGIN_ITEM, &reader.display().to_string())?;
+            println!("MyTimeOff will start when you sign in.");
+            println!("  {}", reader.display());
+            println!();
+            println!("To stop it without this command: Task Manager, Startup apps, {LOGIN_ITEM}.");
+            Ok(())
+        }
+        Some("off") => {
+            autostart::disable(LOGIN_ITEM)?;
+            println!("MyTimeOff will not start when you sign in.");
+            Ok(())
+        }
+        Some(other) => Err(invalid(format!(
+            "no autostart setting called \"{other}\". Try: mytimeoff-daemon autostart on, off or status"
+        ))),
+    }
+}
+
+fn report_autostart() -> io::Result<()> {
+    let item = autostart::read(LOGIN_ITEM)?;
+    match (&item.command, item.enabled) {
+        (None, _) => {
+            println!("MyTimeOff does not start when you sign in.");
+            println!("Turn it on with:  mytimeoff-daemon autostart on");
+        }
+        // Registered, and then switched off in Task Manager. Saying "on" here would be a
+        // lie about the next reboot, and saying "off" would hide an entry that is still
+        // sitting in the registry.
+        (Some(command), false) => {
+            println!("MyTimeOff is registered but switched off in Task Manager's Startup apps.");
+            println!("  {command}");
+            println!("Turn the switch back on there, or remove the entry with:");
+            println!("  mytimeoff-daemon autostart off");
+        }
+        (Some(command), true) => {
+            println!("MyTimeOff starts when you sign in.");
+            println!("  {command}");
+        }
+    }
+    Ok(())
+}
+
+/// The reader window, which lives beside this program.
+///
+/// Beside, because that is how the two are shipped and how they are built. If it is not
+/// there this refuses rather than registering the daemon instead: an autostart that opens
+/// a console window and no reader is not what anyone asked for, and silently doing the
+/// wrong one of two things is worse than doing neither.
+fn reader_exe() -> io::Result<std::path::PathBuf> {
+    let exe = std::env::current_exe()?;
+    let name = if cfg!(windows) { "mytimeoff-shell.exe" } else { "mytimeoff-shell" };
+    let reader = exe.with_file_name(name);
+    if !reader.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "no reader window beside this program, so there is nothing useful to start.\n\
+                 Looked for: {}",
+                reader.display(),
+            ),
+        ));
+    }
+    Ok(reader)
+}
+
+/// "You asked for something impossible", as an `io::Error`.
+fn invalid(message: String) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, message)
 }

@@ -14,9 +14,11 @@ pub mod writing;
 use std::fmt;
 use std::sync::Arc;
 
-use mytimeoff_core::{Locator, Question};
+use mytimeoff_core::{Config, Locator, Question};
 
 use crate::secret;
+
+use self::stub::Stub;
 
 /// One page as a question source sees it: where it was, and what it said.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,6 +226,67 @@ pub(super) fn hash(text: &str) -> u32 {
         hash = hash.wrapping_mul(0x0100_0193);
     }
     hash
+}
+
+/// Who writes the questions for this config, and a sentence saying so.
+///
+/// The sentence is returned rather than printed because both surfaces need it and neither
+/// can print for the other: the daemon has a console, the shell does not, and a decision
+/// this consequential should not be made twice in two places that can drift apart.
+///
+/// Out loud at all because the two things a user most needs to know about this feature are
+/// invisible otherwise: that pages are leaving the machine, or that they are not and the
+/// questions are the weak offline ones. Neither should have to be inferred from the quiz.
+///
+/// The only hard error is a model name that belongs to nobody. Every other outcome is a
+/// working install, so a typo would otherwise mean quietly using the offline questions
+/// forever while the config looks exactly right.
+pub fn source_for(config: &Config) -> Result<(Arc<dyn QuestionSource>, String), String> {
+    let offline: Arc<dyn QuestionSource> = Arc::new(Stub);
+    if config.model.is_empty() {
+        let note = "offline (model is empty; nothing you read leaves this machine)";
+        return Ok((offline, note.to_string()));
+    }
+
+    let Some(provider) = Provider::for_model(&config.model) else {
+        return Err(unknown_model(&config.model));
+    };
+
+    let Some(key) = provider.key() else {
+        return Ok((
+            offline,
+            format!(
+                "offline (no {provider} API key stored)
+                         store one with:  mytimeoff-daemon key {}",
+                provider.word(),
+            ),
+        ));
+    };
+
+    match provider.source(key, config.model.clone()) {
+        Ok(source) => Ok((
+            // Behind it, the offline stub. A gate with no questions lets the reader
+            // through, so a dropped connection would otherwise be a free pass.
+            Arc::new(Fallback::new(source, offline, |note| eprintln!("{note}"))),
+            format!(
+                "{} via {provider} (the pages you read are sent to write the questions)",
+                config.model,
+            ),
+        )),
+        Err(error) => Ok((offline, format!("offline ({error})"))),
+    }
+}
+
+/// What to say about a model name that names no provider.
+pub fn unknown_model(model: &str) -> String {
+    let families = Provider::ALL
+        .iter()
+        .map(|provider| format!("{}* ({})", provider.prefix(), provider))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "model \"{model}\" names no provider I can reach. Expected one of: {families}.          Set model to \"\" to make the questions on this machine instead."
+    )
 }
 
 #[cfg(test)]

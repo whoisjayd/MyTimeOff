@@ -11,6 +11,7 @@ tauri-build = "2"
 [dependencies]
 axum = "0.8.9"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+mytimeoff-core = { path = "../core" }
 mytimeoff-daemon = { path = "../daemon" }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "stream"] }
 tauri = "2"
