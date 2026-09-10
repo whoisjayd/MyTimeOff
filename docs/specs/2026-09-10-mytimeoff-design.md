@@ -119,6 +119,48 @@ Strict behaves as Lenient for that gate, with the reason displayed.
   wizard can unwire cleanly.
 - Auto-update via the Tauri updater plugin.
 
+## Section 4 — Hook wiring, verified against official docs (2026-09-11)
+
+Checked against the Claude Code hooks reference and the Codex config reference rather
+than assumed. Three findings changed the plan.
+
+**Claude Code supports `type: "http"` hooks.** A hook entry can POST the payload straight
+to a URL with an `Authorization` header, its secret named in `allowedEnvVars`. The daemon
+can therefore receive deliveries directly, with no shell-script shim in between — which
+also removes a per-hook process spawn from every prompt you submit. Hooks should be
+registered `"async": true` so the daemon can never delay a turn.
+
+**Codex `notify` cannot arm the reader.** It fires for exactly one event,
+`agent-turn-complete`, with kebab-cased keys (`thread-id`, `turn-id`,
+`last-assistant-message`) passed as the final argv argument. There is no turn-*start*
+notification, so `notify` alone can only release the screen, never take it. Codex support
+therefore depends on its lifecycle hooks (`[hooks.<Event>]` in `config.toml`), which use
+the same event vocabulary as Claude Code: `UserPromptSubmit`, `Stop`, `PermissionRequest`,
+`SessionStart`, `SessionEnd`, `Interrupt`, and more. Codex documents command and MCP-tool
+handlers only — no HTTP handler — so Codex needs a `mytimeoff hook` shim binary that
+forwards stdin to the loopback endpoint. That shim doubles as the fallback for Claude Code
+versions predating HTTP hooks.
+
+**Not every `Notification` means the agent is blocked on you.** The payload carries a
+`notification_type`, and `idle_prompt` fires because *you* have gone quiet — which, while
+you are reading, is exactly what is meant to be happening. Only `permission_prompt` and
+`elicitation_dialog` raise the loud indicator; the rest are ignored. Treating all
+notifications alike would have raised the loudest alert precisely when the tool was
+working correctly.
+
+Payload fields the daemon reads (everything else is ignored so new fields cannot break it):
+
+| Event | Fields used | Meaning |
+|---|---|---|
+| `UserPromptSubmit` | `session_id` | Arm |
+| `Stop`, `SessionEnd` | `session_id` | Turn over |
+| `Notification` | `session_id`, `notification_type` | Blocked on you, if permission/elicitation |
+| `PermissionRequest` (Codex) | `session_id` | Blocked on you |
+| any | `agent_id` | Present only in subagents — ignored entirely |
+
+Subagent deliveries are dropped: a subagent finishing does not mean the agent is ready for
+you, and acting on it would clear the screen early.
+
 ## Developer prerequisites (Windows)
 
 WebView2 runtime is already present on this machine. Required and currently missing:
