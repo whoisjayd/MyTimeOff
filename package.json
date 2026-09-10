@@ -1,0 +1,12 @@
+{
+  "name": "mytimeoff",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.7.1",
+  "scripts": {
+    "reader": "pnpm --filter @mytimeoff/reader dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}

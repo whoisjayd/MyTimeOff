@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MyTimeOff — Reader</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <section id="picker">
+        <h1>MyTimeOff</h1>
+        <p>Drop an EPUB or PDF here, or choose a file to start reading.</p>
+        <input type="file" id="file" accept=".epub,.pdf" />
+        <pre id="error" hidden></pre>
+      </section>
+      <section id="stage" hidden>
+        <div id="viewer"></div>
+        <footer id="status">
+          <button id="prev" type="button" aria-label="Previous page">‹</button>
+          <span id="progress">—</span>
+          <button id="next" type="button" aria-label="Next page">›</button>
+        </footer>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+# Normalise to LF in the repository; tooling on Windows handles LF fine.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.epub binary
+*.pdf binary

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+*.local
+.DS_Store
+.env
+.env.*
+!.env.example
+src-core/target/
+.omc/
+fixtures/
