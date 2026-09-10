@@ -161,6 +161,43 @@ Payload fields the daemon reads (everything else is ignored so new fields cannot
 Subagent deliveries are dropped: a subagent finishing does not mean the agent is ready for
 you, and acting on it would clear the screen early.
 
+## Section 5 — Local test rig (this repo only, 2026-09-11)
+
+Hooks are wired in **this repository only**, never the global `~/.claude/settings.json`.
+A bug in the daemon should be able to spoil one project's sessions, not every agent
+session on the machine. Delete `.claude/settings.local.json` and the wiring is gone.
+
+The token goes into the settings file **literally**, not as `$MYTIMEOFF_TOKEN` with
+`allowedEnvVars`. The env-var form is the right shipping answer, but it needs the variable
+to exist in the environment that launched the agent — which cannot be arranged for an
+already-running session. `.claude/settings.local.json` is gitignored explicitly
+(`*.local` does *not* match `settings.local.json`, which is the easy way to leak this).
+
+Three events are wired, all to `POST /hook`, all `async: true` so a slow or dead daemon
+can never stall a prompt:
+
+| Event | Why |
+|---|---|
+| `UserPromptSubmit` | Arms the grace window |
+| `Stop` | Turn over — raise the indicator |
+| `Notification` | Only `permission_prompt` / `elicitation_dialog` count (see Section 4) |
+
+### Running the rig
+
+```
+cargo run -p mytimeoff-daemon      # terminal 1 — must outlive the agent session
+./scripts/watch-state.ps1          # terminal 2 — prints every state change
+```
+
+The watcher polls; the daemon does not. Polling is fine for an observation tool and wrong
+for the product, which sleeps to the grace deadline instead.
+
+### Known caveat
+
+Claude Code reads hook configuration at startup, so the agent session must be restarted
+after the settings file is written. A session that was already running when the file
+appeared will not deliver anything.
+
 ## Developer prerequisites (Windows)
 
 WebView2 runtime is already present on this machine. Required and currently missing:
