@@ -15,6 +15,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 export class PdfRenderer implements BookRenderer {
   private readonly source: ArrayBuffer;
   private readonly container: HTMLElement;
+  private readonly start: Locator | undefined;
   private doc?: pdfjs.PDFDocumentProxy;
   private loadingTask?: pdfjs.PDFDocumentLoadingTask;
   private canvas?: HTMLCanvasElement;
@@ -23,9 +24,11 @@ export class PdfRenderer implements BookRenderer {
   /** Guards against overlapping renders when pages are turned quickly. */
   private renderToken = 0;
 
-  constructor(source: ArrayBuffer, container: HTMLElement) {
+  /** `start` is where to open, from the last time this book was read. */
+  constructor(source: ArrayBuffer, container: HTMLElement, start?: Locator) {
     this.source = source;
     this.container = container;
+    this.start = start;
   }
 
   async open(): Promise<void> {
@@ -37,7 +40,18 @@ export class PdfRenderer implements BookRenderer {
     this.container.appendChild(canvas);
     this.canvas = canvas;
 
-    await this.show(1);
+    await this.show(this.startPage(this.doc.numPages));
+  }
+
+  /**
+   * The page to open at, which is page one unless there is somewhere to go back to.
+   *
+   * Clamped rather than trusted: a page number outlives the file it was saved from, and
+   * a book re-exported shorter would otherwise open on nothing at all.
+   */
+  private startPage(total: number): number {
+    if (this.start?.kind !== "page") return 1;
+    return Math.min(Math.max(this.start.page, 1), total);
   }
 
   async next(): Promise<void> {

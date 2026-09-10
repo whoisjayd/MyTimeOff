@@ -14,14 +14,24 @@ const LOCATION_GRANULARITY = 1024;
 export class EpubRenderer implements BookRenderer {
   private readonly source: ArrayBuffer | string;
   private readonly container: HTMLElement;
+  private readonly start: Locator | undefined;
   private book?: Book;
   private rendition?: Rendition;
   private listeners: Array<(page: RenderedPage) => void> = [];
   private locationsReady = false;
 
-  constructor(source: ArrayBuffer | string, container: HTMLElement) {
+  /**
+   * `start` is where to open, from the last time this book was read.
+   *
+   * It is a constructor argument rather than one to `open()` because the interface
+   * deliberately takes nothing at open time - a terminal renderer and a DOM one are
+   * given what they need when they are made, and `open()` stays the same sentence for
+   * both.
+   */
+  constructor(source: ArrayBuffer | string, container: HTMLElement, start?: Locator) {
     this.source = source;
     this.container = container;
+    this.start = start;
   }
 
   async open(): Promise<void> {
@@ -40,7 +50,15 @@ export class EpubRenderer implements BookRenderer {
       void this.emitCurrentPage();
     });
 
-    await rendition.display();
+    // A CFI is only meaningful inside the book it came from. A file swapped for another
+    // edition under the same name would make this throw, and refusing to open a book
+    // over a stale bookmark would be a worse answer than opening it at the beginning.
+    const at = this.start?.kind === "cfi" ? this.start.cfi : undefined;
+    try {
+      await rendition.display(at);
+    } catch {
+      await rendition.display();
+    }
 
     // Index in the background so the first page is instant.
     void book.locations

@@ -227,6 +227,9 @@ async fn every_route_is_behind_the_token() {
         ("POST", "/book"),
         ("POST", "/page-view"),
         ("GET", "/progress"),
+        ("GET", "/library"),
+        ("POST", "/library?id=book-1"),
+        ("GET", "/library/file"),
     ] {
         let (status, _) = request(addr, method, path, None, "{}").await;
         assert_eq!(status, 401, "{method} {path} must require the token");
@@ -715,4 +718,68 @@ async fn the_goal_comes_from_the_config() {
     let (_, progress) = request(addr, "GET", "/progress", Some(TOKEN), "").await;
     assert!(progress.contains(r#""goal":20"#), "{progress}");
     assert!(progress.contains(r#""met":false"#), "{progress}");
+}
+
+#[tokio::test]
+async fn a_first_run_has_no_book_to_reopen() {
+    let addr = start(ReaderMode::Strict).await;
+    let (status, _) = get(addr, "/library").await;
+    assert_eq!(status, 204, "nothing kept means nothing to resume, not an error");
+    let (status, _) = get(addr, "/library/file").await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn a_book_is_uploaded_once_and_handed_back_afterwards() {
+    // The behaviour the whole feature exists for: after this, a reader that restarts has
+    // everything it needs to draw the book without anyone choosing a file.
+    let addr = start(ReaderMode::Strict).await;
+    read_pages(addr, 3).await;
+
+    let (status, body) = post(addr, "/library?id=book-1", "%PDF-1.7 pretend-book").await;
+    assert_eq!(status, 204, "{body}");
+
+    let (status, body) = get(addr, "/library").await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains(r#""id":"book-1""#), "the book comes back: {body}");
+    assert!(body.contains(r#""page_label":"3""#), "and where it was left: {body}");
+
+    let (status, body) = get(addr, "/library/file").await;
+    assert_eq!(status, 200);
+    assert!(body.ends_with("%PDF-1.7 pretend-book"), "the bytes come back whole: {body:?}");
+}
+
+#[tokio::test]
+async fn a_book_registered_but_never_uploaded_is_not_offered_as_bytes() {
+    // A surface that reads straight off disk registers a book and uploads nothing. It
+    // still resumes; there is simply no file to hand a browser.
+    let addr = start(ReaderMode::Strict).await;
+    read_pages(addr, 1).await;
+    let (status, body) = get(addr, "/library").await;
+    assert_eq!(status, 200, "{body}");
+    let (status, _) = get(addr, "/library/file").await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn bytes_for_a_book_that_is_no_longer_open_are_refused() {
+    let addr = start(ReaderMode::Strict).await;
+    read_pages(addr, 1).await;
+    let second = r#"{"id":"book-2","format":"epub","title":"Another","path":null,
+                     "author":null,"total_pages":null}"#;
+    assert_eq!(post(addr, "/book", second).await.0, 204);
+
+    let (status, body) = post(addr, "/library?id=book-1", "too late").await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(get(addr, "/library/file").await.0, 404, "and nothing was attached");
+}
+
+#[tokio::test]
+async fn an_upload_that_says_nothing_about_which_book_is_rejected() {
+    // Without the id the daemon would have to guess "whatever is open", and a book opened
+    // between the two requests would silently get the wrong bytes.
+    let addr = start(ReaderMode::Strict).await;
+    read_pages(addr, 1).await;
+    let (status, _) = post(addr, "/library", "bytes").await;
+    assert_eq!(status, 400);
 }

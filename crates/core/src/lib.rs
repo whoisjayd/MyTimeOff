@@ -18,4 +18,4 @@ pub use quiz::{
     Answer, AskedQuestion, Gate, PassMark, Policy, Question, Quiz, Refusal, Release, Score,
     Submission, Verdict,
 };
-pub use reading::{Book, BookFormat, Locator, PageView};
+pub use reading::{Book, BookFormat, Locator, PageView, Resume};

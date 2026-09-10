@@ -31,6 +31,18 @@ pub struct Book {
     pub total_pages: Option<u32>,
 }
 
+/// Where reading picks up: the open book, and the last place it was left.
+///
+/// `at` is optional because a book that was registered and never read has no last place -
+/// which is a resume onto page one, not a failure. Nothing here says *how* to reach that
+/// position; a CFI means something only to an EPUB renderer and a page number only to a
+/// PDF one, and that asymmetry is the [`Locator`]'s to carry, not this record's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resume {
+    pub book: Book,
+    pub at: Option<Locator>,
+}
+
 /// A position in a book, expressed the way that book can express it.
 ///
 /// EPUB has no pages - it has CFIs into a reflowable document - so a page number would be
@@ -118,6 +130,31 @@ mod tests {
         // Chapter breaks and cover art are held for a long time while nothing is read,
         // and a quiz cannot be drawn from them either.
         assert!(!view(60_000, "   \n  ").counts(3_000));
+    }
+
+    #[test]
+    fn a_resume_says_the_book_and_the_place_in_the_wire_shape_the_reader_reads() {
+        // The TypeScript client mirrors these names by hand. A rename here that is not
+        // mirrored there is a silent "no book kept" on every launch, so the shape is
+        // pinned rather than assumed.
+        let resume = Resume {
+            book: Book {
+                id: "the-book.epub".into(),
+                format: BookFormat::Epub,
+                title: "The Book".into(),
+                author: None,
+                path: None,
+                total_pages: None,
+            },
+            at: Some(Locator::Cfi { cfi: "epubcfi(/6/4!/4/2)".into(), page_label: "12".into() }),
+        };
+        let wire = serde_json::to_value(&resume).expect("serialise");
+        assert_eq!(wire["book"]["id"], "the-book.epub");
+        assert_eq!(wire["book"]["format"], "epub");
+        assert_eq!(wire["at"]["kind"], "cfi");
+        assert_eq!(wire["at"]["page_label"], "12");
+        assert_eq!(serde_json::to_value(Resume { at: None, ..resume }).expect("s")["at"],
+                   serde_json::Value::Null);
     }
 
     #[test]

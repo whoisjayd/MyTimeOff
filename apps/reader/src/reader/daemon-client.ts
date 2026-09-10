@@ -9,6 +9,7 @@ import type {
   Progress,
   Refusal,
   Release,
+  Resume,
   Verdict,
 } from "@mytimeoff/core";
 
@@ -45,12 +46,13 @@ function readLocator(wire: WireLocator): Locator {
     : { kind: "page", page: wire.page ?? 0, pageLabel: wire.page_label };
 }
 
-async function send(path: string, body?: unknown): Promise<Response> {
+async function send(path: string, body?: unknown, init?: RequestInit): Promise<Response> {
   const response = await fetch(`${BASE}/${path}`, {
     method: body === undefined ? "GET" : "POST",
     ...(body === undefined
       ? {}
       : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    ...init,
   });
   if (!response.ok) {
     throw new Error(`${path} failed: ${response.status} ${await response.text()}`);
@@ -82,15 +84,25 @@ export async function reportBook(book: Book): Promise<void> {
  * `stored: false` means the daemon had already recorded this visit. That is the answer
  * to a retry, not an error, and a caller must not treat it as one.
  */
-export async function reportPageView(view: PageView): Promise<PageViewReceipt> {
-  const response = await send("page-view", {
-    book_id: view.bookId,
-    locator: wireLocator(view.locator),
-    text: view.text,
-    entered_at: view.enterTs,
-    exited_at: view.exitTs,
-    dwell_ms: view.dwellMs,
-  });
+export async function reportPageView(
+  view: PageView,
+  options: { keepalive?: boolean } = {},
+): Promise<PageViewReceipt> {
+  const response = await send(
+    "page-view",
+    {
+      book_id: view.bookId,
+      locator: wireLocator(view.locator),
+      text: view.text,
+      entered_at: view.enterTs,
+      exited_at: view.exitTs,
+      dwell_ms: view.dwellMs,
+    },
+    // The last page of a session is reported while the window is closing, and a plain
+    // fetch is cancelled the moment it does. `keepalive` is what lets that page count -
+    // and what makes the position it resumes to the page you were actually on.
+    options.keepalive ? { keepalive: true } : undefined,
+  );
   const receipt = (await response.json()) as { counted: boolean; stored: boolean };
   return { counted: receipt.counted, stored: receipt.stored };
 }
@@ -202,4 +214,60 @@ export async function answer(quizId: string, answers: Answer[]): Promise<Verdict
 export async function skip(): Promise<Verdict> {
   const response = await send("gate/skip", {});
   return readVerdict((await response.json()) as WireVerdict);
+}
+
+/**
+ * The book the daemon kept, and where it was left - or null on a first run.
+ *
+ * A reader asks this before it draws anything. It is the difference between a tool that
+ * demands a file every launch and one where the book is simply open.
+ */
+export async function resume(): Promise<Resume | null> {
+  const response = await send("library");
+  // 204: nothing has been read on this machine yet, which is an answer rather than a
+  // failure - so it must not be a throw, and `json()` on an empty body would be one.
+  if (response.status === 204) return null;
+  const wire = (await response.json()) as {
+    book: {
+      id: string;
+      format: "epub" | "pdf";
+      title: string;
+      author: string | null;
+      path: string | null;
+      total_pages: number | null;
+    };
+    at: WireLocator | null;
+  };
+  return {
+    book: {
+      id: wire.book.id,
+      format: wire.book.format,
+      title: wire.book.title,
+      ...(wire.book.author ? { author: wire.book.author } : {}),
+      ...(wire.book.path ? { path: wire.book.path } : {}),
+      ...(wire.book.total_pages ? { totalPages: wire.book.total_pages } : {}),
+    },
+    at: wire.at ? readLocator(wire.at) : null,
+  };
+}
+
+/** The kept book's bytes, ready to hand straight to a renderer. */
+export async function bookBytes(): Promise<ArrayBuffer> {
+  return await (await send("library/file")).arrayBuffer();
+}
+
+/**
+ * Hands the daemon the bytes of the book just opened, so this is the last time it has to
+ * be chosen.
+ *
+ * The id travels with them because the daemon refuses bytes for a book that is no longer
+ * the open one - otherwise a second book opened in the gap between registering and
+ * uploading would quietly be given the first one's pages.
+ */
+export async function keepBook(bookId: string, bytes: ArrayBuffer): Promise<void> {
+  await send(`library?id=${encodeURIComponent(bookId)}`, undefined, {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body: bytes,
+  });
 }

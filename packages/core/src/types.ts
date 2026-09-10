@@ -40,6 +40,20 @@ export interface PageView {
   dwellMs: number;
 }
 
+/**
+ * Where reading picks up: the book the daemon kept, and the last place it was left.
+ *
+ * This is what makes the book a fixture rather than something to choose again. A surface
+ * asks for it before drawing anything, and only offers a picker when there is none.
+ *
+ * `at` is null for a book that was registered and never read - a resume onto page one,
+ * not a failure.
+ */
+export interface Resume {
+  book: Book;
+  at: Locator | null;
+}
+
 /** The daemon's answer to a reported page view. */
 export interface PageViewReceipt {
   /** False when dwell fell under the skim threshold: seen, not read. */

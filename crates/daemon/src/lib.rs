@@ -17,18 +17,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use axum::extract::{Request, State};
+use axum::body::Bytes;
+use axum::extract::{DefaultBodyLimit, Query, Request, State};
 use axum::http::{StatusCode, header::AUTHORIZATION};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router, middleware};
 use mytimeoff_core::{
-    Alert, AskedQuestion, Book, Command, Config, Event, Gate, HookPayload, Machine, Millis,
-    NotifyPayload, PageView, Policy, Quiz, ReaderMode, Release, State as TurnState, Submission,
-    Verdict,
+    Alert, AskedQuestion, Book, BookFormat, Command, Config, Event, Gate, HookPayload, Machine,
+    Millis, NotifyPayload, PageView, Policy, Quiz, ReaderMode, Release, State as TurnState,
+    Submission, Verdict,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::quiz::QuestionSource;
 use crate::store::Store;
@@ -89,6 +90,13 @@ const LOG_HISTORY: usize = 64;
 /// Buffered commands per subscriber. A surface further behind than this has stopped
 /// keeping up entirely, and the resynchronise-on-lag path is what recovers it.
 const COMMAND_BUFFER: usize = 32;
+
+/// The largest book the daemon will keep.
+///
+/// A limit has to exist because the body is held in memory on the way in - by the shell's
+/// bridge, by axum, and by SQLite - so a mistaken POST of something enormous would be
+/// three copies of it. This is far past any real EPUB or PDF and far short of trouble.
+const MAX_BOOK_BYTES: usize = 128 * 1024 * 1024;
 
 /// Pages a gate may draw on. More than it will ask about, because a page can be a chapter
 /// heading with nothing to ask, and because the wrong answers are drawn from the other
@@ -380,6 +388,65 @@ async fn page_view(State(daemon): State<Arc<Daemon>>, Json(view): Json<PageView>
     }
 }
 
+/// The book to reopen, and where it was left. 204 on a first run.
+///
+/// This is the endpoint that answers "do I have to choose a book again": a reader asks it
+/// before drawing anything, and only falls back to the picker when the answer is nothing.
+async fn library(State(daemon): State<Arc<Daemon>>) -> Response {
+    match daemon.store.resume() {
+        Ok(Some(resume)) => Json(resume).into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => store_error(error),
+    }
+}
+
+/// The open book's bytes, so a surface that cannot open a path can still open the book.
+async fn library_file(State(daemon): State<Arc<Daemon>>) -> Response {
+    match daemon.store.book_bytes() {
+        Ok(Some((format, bytes))) => {
+            ([(axum::http::header::CONTENT_TYPE, media_type(format))], bytes).into_response()
+        }
+        // A registered book whose bytes were never kept. Not an error - a surface that
+        // reads off disk never uploads - but nothing to hand back either.
+        Ok(None) => (StatusCode::NOT_FOUND, "no book is kept").into_response(),
+        Err(error) => store_error(error),
+    }
+}
+
+/// Hands the daemon the bytes of the book that was just registered.
+///
+/// The id travels in the query rather than being inferred from "whatever is open", so a
+/// second book opened between the two requests is a refusal instead of a mix-up.
+async fn library_upload(
+    State(daemon): State<Arc<Daemon>>,
+    Query(which): Query<BookId>,
+    bytes: Bytes,
+) -> Response {
+    if bytes.is_empty() {
+        return (StatusCode::BAD_REQUEST, "no bytes").into_response();
+    }
+    match daemon.store.keep_book_bytes(&which.id, &bytes) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => {
+            (StatusCode::CONFLICT, "that book is not the one that is open").into_response()
+        }
+        Err(error) => store_error(error),
+    }
+}
+
+/// Which book the bytes belong to.
+#[derive(Deserialize)]
+struct BookId {
+    id: String,
+}
+
+fn media_type(format: BookFormat) -> &'static str {
+    match format {
+        BookFormat::Epub => "application/epub+zip",
+        BookFormat::Pdf => "application/pdf",
+    }
+}
+
 /// How the day is going.
 async fn progress(State(daemon): State<Arc<Daemon>>) -> Response {
     match daemon.store.pages_read_today() {
@@ -620,6 +687,14 @@ pub fn router(daemon: Arc<Daemon>) -> Router {
         .route("/book", post(book))
         .route("/page-view", post(page_view))
         .route("/progress", get(progress))
+        // The one route that carries a whole book, and so the one that opts out of axum's
+        // 2MB default. Raised here rather than globally: every other endpoint takes a
+        // small JSON body and has no business accepting more.
+        .route(
+            "/library",
+            get(library).post(library_upload).layer(DefaultBodyLimit::max(MAX_BOOK_BYTES)),
+        )
+        .route("/library/file", get(library_file))
         // Applied last so it wraps every route above; a new route cannot be added
         // without inheriting authentication.
         .layer(middleware::from_fn_with_state(daemon.clone(), require_token))
