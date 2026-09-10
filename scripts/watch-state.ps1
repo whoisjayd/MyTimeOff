@@ -28,6 +28,7 @@ $uri = "http://127.0.0.1:$Port/state"
 Write-Host "watching $uri  (Ctrl+C to stop)" -ForegroundColor DarkGray
 
 $last = $null
+$seen = 0
 while ($true) {
     try {
         $report = Invoke-RestMethod -Uri $uri -Headers $headers -TimeoutSec 5
@@ -45,6 +46,17 @@ while ($true) {
     $sess  = if ($report.session) { $report.session } else { '-' }
     $alert = if ($report.alert)   { $report.alert }   else { '-' }
     $line  = '{0,-8} session={1,-40} alert={2}' -f $report.state, $sess, $alert
+
+    # Deliveries first: a hook that never arrived and one that arrived and was correctly
+    # ignored look identical from the state alone.
+    if ($report.received.Count -lt $seen) { $seen = 0 }   # daemon restarted
+    if ($report.received.Count -gt $seen) {
+        foreach ($entry in $report.received[$seen..($report.received.Count - 1)]) {
+            $arrow = if ($entry -match '-> ignored$') { 'DarkGray' } else { 'White' }
+            Write-Host ("          recv: {0}" -f $entry) -ForegroundColor $arrow
+        }
+        $seen = $report.received.Count
+    }
 
     if ($line -ne $last) {
         $color = switch ($report.state) {

@@ -222,6 +222,40 @@ async fn codex_notify_ends_a_turn_it_did_not_start() {
     assert!(report.contains("indicator_done"), "{report}");
 }
 
+/// The bug a live agent found: the machine only armed from idle, so once the indicator
+/// was up every later prompt was swallowed and the reader could never be reached again.
+#[tokio::test]
+async fn a_new_prompt_after_the_indicator_returns_to_reading() {
+    let addr = start(ReaderMode::Strict).await;
+    post(addr, "/hook", &hook_body("UserPromptSubmit", "s1")).await;
+    past_grace().await;
+    post(addr, "/hook", &hook_body("Stop", "s1")).await;
+
+    let report = state(addr).await;
+    assert!(report.contains(r#""state":"ready""#), "{report}");
+
+    // Back to the terminal, another prompt, without ever leaving the reader.
+    post(addr, "/hook", &hook_body("UserPromptSubmit", "s1")).await;
+
+    let report = state(addr).await;
+    assert!(report.contains(r#""state":"reading""#), "must not wedge in ready: {report}");
+    assert!(report.contains("clear_indicator"), "the stale indicator must go: {report}");
+}
+
+/// A hook that never arrives and a hook that arrives and is correctly ignored are
+/// indistinguishable from `issued` alone, which makes a live wiring test unreadable.
+#[tokio::test]
+async fn deliveries_are_logged_even_when_they_change_nothing() {
+    let addr = start(ReaderMode::Strict).await;
+    post(addr, "/hook", &hook_body("PreToolUse", "s1")).await;
+
+    let report = state(addr).await;
+    assert!(report.contains("PreToolUse"), "the delivery must be visible: {report}");
+    assert!(report.contains("ignored"), "and marked as ignored: {report}");
+    assert!(report.contains(r#""issued":[]"#), "while changing nothing: {report}");
+    assert!(report.contains(r#""state":"idle""#), "{report}");
+}
+
 #[tokio::test]
 async fn malformed_json_is_refused_without_touching_the_screen() {
     let addr = start(ReaderMode::Strict).await;

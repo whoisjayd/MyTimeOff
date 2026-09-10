@@ -35,11 +35,21 @@ pub struct Daemon {
     /// Recently issued commands. A holding pen until the reader window subscribes; for
     /// now it is what makes behaviour observable from `GET /state`.
     issued: Mutex<Vec<Command>>,
+    /// What actually arrived, in order, whether or not it changed anything.
+    ///
+    /// `issued` only shows deliveries the machine acted on, which makes a live wiring
+    /// test unreadable: a hook that never arrives and a hook that arrives and is
+    /// deliberately ignored look identical from outside.
+    log: Mutex<Vec<String>>,
 }
 
 /// How many issued commands to keep. The daemon is meant to run for days, so this cannot
 /// be an unbounded log - and only the recent tail is useful for seeing what just happened.
 const ISSUED_HISTORY: usize = 32;
+
+/// How many deliveries to remember. Longer than ISSUED_HISTORY because most deliveries
+/// are correctly ignored and never reach it.
+const LOG_HISTORY: usize = 64;
 
 impl Daemon {
     pub fn new(mode: ReaderMode, grace: Duration, token: String) -> Arc<Self> {
@@ -49,11 +59,22 @@ impl Daemon {
             token,
             wake: Notify::new(),
             issued: Mutex::new(Vec::new()),
+            log: Mutex::new(Vec::new()),
         })
     }
 
     fn now(&self) -> Millis {
         self.started.elapsed().as_millis() as Millis
+    }
+
+    /// Records one delivery for `GET /state`.
+    fn note(&self, entry: String) {
+        let mut log = self.log.lock().expect("log lock");
+        log.push(entry);
+        if log.len() > LOG_HISTORY {
+            let excess = log.len() - LOG_HISTORY;
+            log.drain(..excess);
+        }
     }
 
     /// Feeds one event to the machine and records what it decided.
@@ -109,6 +130,18 @@ pub struct StateReport {
     mode: &'static str,
     alert: Option<&'static str>,
     issued: Vec<&'static str>,
+    received: Vec<String>,
+}
+
+fn describe_event(event: &Event) -> &'static str {
+    match event {
+        Event::AgentStart { .. } => "agent_start",
+        Event::AgentDone { .. } => "agent_done",
+        Event::AgentNeedsInput { .. } => "agent_needs_input",
+        Event::Tick { .. } => "tick",
+        Event::ExitRequested { .. } => "exit_requested",
+        Event::GateCleared { .. } => "gate_cleared",
+    }
 }
 
 fn describe_command(command: Command) -> &'static str {
@@ -148,7 +181,9 @@ async fn state(State(daemon): State<Arc<Daemon>>) -> Json<StateReport> {
         .map(|c| describe_command(*c))
         .collect();
 
-    Json(StateReport { state: name, session, mode, alert, issued })
+    let received = daemon.log.lock().expect("log lock").clone();
+
+    Json(StateReport { state: name, session, mode, alert, issued, received })
 }
 
 /// Claude Code `type: "http"` hooks POST here, as does the Codex shim.
@@ -159,7 +194,15 @@ async fn hook(State(daemon): State<Arc<Daemon>>, body: String) -> Response {
         Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
     };
 
-    if let Some(event) = payload.to_event(daemon.now()) {
+    let now = daemon.now();
+    let mapped = payload.to_event(now);
+    daemon.note(format!(
+        "{now} {} {} -> {}",
+        payload.hook_event_name,
+        payload.notification_type.as_deref().unwrap_or("-"),
+        mapped.as_ref().map_or("ignored", describe_event),
+    ));
+    if let Some(event) = mapped {
         daemon.dispatch(event);
     }
     // Hooks read our response for permission decisions we never make, so say nothing.
@@ -173,7 +216,14 @@ async fn notify(State(daemon): State<Arc<Daemon>>, body: String) -> Response {
         Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
     };
 
-    if let Some(event) = payload.to_event(daemon.now()) {
+    let now = daemon.now();
+    let mapped = payload.to_event(now);
+    daemon.note(format!(
+        "{now} notify:{} -> {}",
+        payload.kind,
+        mapped.as_ref().map_or("ignored", describe_event),
+    ));
+    if let Some(event) = mapped {
         daemon.dispatch(event);
     }
     StatusCode::NO_CONTENT.into_response()
