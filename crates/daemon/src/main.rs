@@ -1,4 +1,4 @@
-use std::io::{self, Read};
+use std::io;
 
 use mytimeoff_core::Locator;
 use mytimeoff_daemon::quiz::{self, Page, Provider};
@@ -163,11 +163,15 @@ fn samples() -> Vec<Page> {
     ]
 }
 
-/// `mytimeoff-daemon key [claude|gemini]` - puts an API key where the daemon will look.
+/// `mytimeoff key [claude|gemini]` - puts an API key where the daemon will look.
 ///
 /// It reads from stdin rather than taking an argument, so the key never lands in a shell
 /// history or a process list. It is echoed as you type it, which is the honest limit of
 /// what can be done without dragging in a terminal crate for one prompt.
+///
+/// One line, ending at the Enter the prompt asks for. Reading to EOF instead would leave
+/// somebody who did exactly as they were told sitting at a terminal that never came back
+/// - which is what it did, until it didn't.
 ///
 /// With no provider named it stores the key for whichever one the configured model
 /// implies, because that is what someone who has edited their config once and wants it to
@@ -194,7 +198,7 @@ fn store_key(word: Option<&str>) -> io::Result<()> {
     println!("under \"{}\" - never in this project's config.", provider.credential());
 
     let mut typed = String::new();
-    io::stdin().read_to_string(&mut typed)?;
+    io::stdin().read_line(&mut typed)?;
     let key = typed.trim();
     if key.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "no key given"));
