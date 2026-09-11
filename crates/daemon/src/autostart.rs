@@ -46,13 +46,25 @@ pub fn read(name: &str) -> io::Result<LoginItem> {
     platform::read(name)
 }
 
-/// Registers a command to run at sign-in, replacing any entry under the same name.
+/// The word that tells the window Windows started it, rather than a person.
+///
+/// It lives here because both ends need the same spelling and this is the module both can
+/// see: written into the `Run` entry below, read by the window when it decides whether to
+/// show itself. Sign-in is the one launch that must not take the screen; every other one
+/// is somebody asking for the app and should get it.
+pub const AT_LOGIN: &str = "--at-login";
+
+/// Registers a program to run at sign-in, replacing any entry under the same name.
+///
+/// `arguments` goes on the command line as written and may be empty. It is separate from
+/// `program` because only the program is quoted: a path with a space in it has to be one
+/// token, and an argument wrapped inside those same quotes stops being an argument.
 ///
 /// It also clears the "user turned this off" record rather than overwriting it with an
 /// "on" one. Asking for autostart is an explicit request and should take effect, but the
 /// approval byte is Windows' bookkeeping and Windows should be the one to write it.
-pub fn enable(name: &str, command: &str) -> io::Result<()> {
-    platform::enable(name, command)
+pub fn enable(name: &str, program: &str, arguments: &str) -> io::Result<()> {
+    platform::enable(name, program, arguments)
 }
 
 /// Removes the entry. Missing is not an error: the point is that it is gone.
@@ -64,9 +76,13 @@ pub fn disable(name: &str) -> io::Result<()> {
 ///
 /// `C:\Program Files\...` unquoted is read by Windows as a program called `C:\Program`
 /// with an argument, which is the oldest bug on the platform. Quoting is unconditional
-/// because a path that needs no quotes is not harmed by them.
-fn quoted(program: &str) -> String {
-    format!("\"{program}\"")
+/// because a path that needs no quotes is not harmed by them - and it stops at the
+/// program, because quotes around the whole line would make the arguments part of the name.
+fn command_line(program: &str, arguments: &str) -> String {
+    match arguments {
+        "" => format!("\"{program}\""),
+        arguments => format!("\"{program}\" {arguments}"),
+    }
 }
 
 /// Whether Task Manager's switch is on, given that key's bytes.
@@ -91,7 +107,7 @@ mod platform {
         RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     };
 
-    use super::{LoginItem, approved, quoted};
+    use super::{LoginItem, approved, command_line};
 
     /// The startup list itself.
     const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -111,8 +127,8 @@ mod platform {
         })
     }
 
-    pub fn enable(name: &str, command: &str) -> io::Result<()> {
-        let command = quoted(command);
+    pub fn enable(name: &str, program: &str, arguments: &str) -> io::Result<()> {
+        let command = command_line(program, arguments);
         let key = open(RUN, KEY_SET_VALUE)?;
         let name = wide(name);
         let data = wide(&command);
@@ -252,7 +268,7 @@ mod platform {
         Ok(LoginItem::absent())
     }
 
-    pub fn enable(_name: &str, _command: &str) -> io::Result<()> {
+    pub fn enable(_name: &str, _program: &str, _arguments: &str) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "no startup list here"))
     }
 
@@ -268,8 +284,19 @@ mod tests {
     #[test]
     fn a_path_with_a_space_in_it_is_still_one_program() {
         assert_eq!(
-            quoted(r"C:\Program Files\MyTimeOff\mytimeoff-shell.exe"),
-            "\"C:\\Program Files\\MyTimeOff\\mytimeoff-shell.exe\"",
+            command_line(r"C:\Program Files\MyTimeOff\MyTimeOff.exe", ""),
+            "\"C:\\Program Files\\MyTimeOff\\MyTimeOff.exe\"",
+        );
+    }
+
+    #[test]
+    fn an_argument_stays_outside_the_quotes() {
+        // Inside them it would be read as part of the file name, and Windows would look
+        // for a program that does not exist - silently, at sign-in, where nobody is there
+        // to see it fail.
+        assert_eq!(
+            command_line(r"C:\Program Files\MyTimeOff\MyTimeOff.exe", AT_LOGIN),
+            "\"C:\\Program Files\\MyTimeOff\\MyTimeOff.exe\" --at-login",
         );
     }
 
@@ -318,14 +345,14 @@ mod tests {
         let name = format!("MyTimeOff test {}", std::process::id());
         assert_eq!(read(&name).expect("read"), LoginItem::absent(), "must start empty");
 
-        let exe = r"C:\Program Files\MyTimeOff\mytimeoff-shell.exe";
-        enable(&name, exe).expect("enable");
+        let exe = r"C:\Program Files\MyTimeOff\MyTimeOff.exe";
+        enable(&name, exe, AT_LOGIN).expect("enable");
         let item = read(&name).expect("read back");
-        assert_eq!(item.command.as_deref(), Some(format!("\"{exe}\"").as_str()));
+        assert_eq!(item.command.as_deref(), Some(format!("\"{exe}\" {AT_LOGIN}").as_str()));
         assert!(item.will_run());
 
         // Replacing, not accumulating.
-        enable(&name, r"C:\other.exe").expect("re-enable");
+        enable(&name, r"C:\other.exe", "").expect("re-enable");
         assert_eq!(read(&name).expect("read back").command.as_deref(), Some("\"C:\\other.exe\""));
 
         disable(&name).expect("disable");

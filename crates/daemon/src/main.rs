@@ -465,7 +465,7 @@ fn autostart_command(word: Option<&str>) -> io::Result<()> {
         None | Some("status") => report_autostart(),
         Some("on") => {
             let reader = reader_exe()?;
-            autostart::enable(LOGIN_ITEM, &reader.display().to_string())?;
+            autostart::enable(LOGIN_ITEM, &reader.display().to_string(), autostart::AT_LOGIN)?;
             println!("MyTimeOff will start when you sign in.");
             println!("  {}", reader.display());
             println!();
@@ -497,11 +497,19 @@ fn report_autostart() -> io::Result<()> {
             println!("MyTimeOff is registered but switched off in Task Manager's Startup apps.");
             println!("  {command}");
             println!("Turn the switch back on there, or remove the entry with:");
-            println!("  mytimeoff-daemon autostart off");
+            println!("  mytimeoff autostart off");
         }
         (Some(command), true) => {
             println!("MyTimeOff starts when you sign in.");
             println!("  {command}");
+            // Entries written before the window learned to tell a sign-in from a click.
+            // Harmless, but it puts a book on screen at the moment somebody is trying to
+            // log in, which is the one thing autostart is supposed to never do.
+            if !command.contains(autostart::AT_LOGIN) {
+                println!();
+                println!("That entry is an old one and will open the window at sign-in.");
+                println!("Run  mytimeoff autostart on  again to make it start out of sight.");
+            }
         }
     }
     Ok(())

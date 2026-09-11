@@ -6,7 +6,7 @@ license.workspace = true
 description = "The window that takes the screen, and the bridge that feeds it"
 
 [build-dependencies]
-tauri-build = "2"
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
 axum = "0.8.9"
@@ -14,5 +14,6 @@ futures-util = { version = "0.3.34", default-features = false, features = ["std"
 mytimeoff-core = { path = "../core" }
 mytimeoff-daemon = { path = "../daemon" }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2", "stream"] }
-tauri = "2"
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net"] }

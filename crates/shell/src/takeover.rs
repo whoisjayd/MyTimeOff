@@ -13,10 +13,20 @@
 //! handles what it uniquely can, and stays out of everything else.
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use tauri::WebviewWindow;
+
+/// Whether the window is up because a person asked for it, rather than because a turn
+/// started. Set by [`raise`], cleared by [`take`], obeyed by [`release`].
+///
+/// A process-wide static rather than state threaded through: there is exactly one reader
+/// window, and `tauri-plugin-single-instance` is what makes that true of the whole
+/// machine. Relaxed ordering is enough because nothing else is published alongside it -
+/// the only question ever asked of it is "did somebody click?".
+static WANTED: AtomicBool = AtomicBool::new(false);
 
 /// How long to wait before trying the stream again.
 ///
@@ -97,8 +107,25 @@ fn obey(window: &WebviewWindow, command: &str) {
 /// that even when the focus request is refused, the reader is still visible - which is
 /// the whole point, and a takeover that only half-worked is still a takeover.
 fn take(window: &WebviewWindow) {
+    // A takeover now owns whether this window is up, so whatever the person asked for
+    // earlier has been answered. Without this, opening the window once would stop it ever
+    // getting out of the way again.
+    WANTED.store(false, Ordering::Relaxed);
     let _ = window.show();
     let _ = window.set_always_on_top(true);
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+/// Shows the window because a person asked to see it.
+///
+/// Deliberately not [`take`]: always-on-top is what an interruption looks like, and being
+/// interrupted is not what somebody who just double-clicked the icon asked for. They want
+/// to look at the app, and an app that then pins itself over everything else is one they
+/// will close and not open again.
+pub fn raise(window: &WebviewWindow) {
+    WANTED.store(true, Ordering::Relaxed);
+    let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
 }
@@ -109,7 +136,16 @@ fn take(window: &WebviewWindow) {
 /// still marked on-top comes back on-top the next time anything shows it, including the
 /// user clicking the tray icon to read voluntarily - which would pin a window over their
 /// work that the daemon never asked to take the screen.
+///
+/// It gives back the screen, not the window. A window somebody opened on purpose is not
+/// this command's to close: `/events` replays the current state to every new subscriber,
+/// so an idle daemon says `hide_reader` the instant the shell connects - which, before
+/// [`WANTED`] existed, closed the window a second after it was clicked open and looked
+/// exactly like a program that does not start.
 fn release(window: &WebviewWindow) {
     let _ = window.set_always_on_top(false);
+    if WANTED.load(Ordering::Relaxed) {
+        return;
+    }
     let _ = window.hide();
 }
