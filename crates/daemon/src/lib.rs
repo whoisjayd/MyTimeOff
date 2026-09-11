@@ -4,6 +4,7 @@
 //! All the rules live in `mytimeoff-core`. This crate only supplies the things the core
 //! deliberately refuses to know about: a socket, a clock, and a token.
 
+pub mod agents;
 pub mod autostart;
 pub mod paths;
 pub mod quiz;
@@ -19,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{StatusCode, header::AUTHORIZATION};
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -32,6 +33,7 @@ use mytimeoff_core::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::agents::Agent;
 use crate::quiz::QuestionSource;
 use crate::store::Store;
 use tokio::net::TcpListener;
@@ -654,6 +656,138 @@ struct Progress {
     met: bool,
 }
 
+/// One coding agent, as the panel in the window draws it.
+///
+/// Everything the panel needs in one object, including the parts it only shows when
+/// something is wrong, so that drawing a row never means a second request.
+#[derive(Serialize)]
+struct AgentView {
+    /// The name this agent answers to in a URL. Also the row's identity for the panel.
+    key: &'static str,
+    label: &'static str,
+    /// Whether this wiring has ever been run against the real thing. See
+    /// [`Agent::proven`] - a `false` here is what the panel turns into a warning, and it
+    /// is deliberately reported rather than hidden.
+    proven: bool,
+    /// Whether the agent's config directory exists, which is the nearest thing to "is
+    /// this installed" that can be answered without running it.
+    present: bool,
+    path: String,
+    events: &'static [&'static str],
+    wired: Vec<WiredView>,
+    /// Every event wired, and every one of them pointing where it should today.
+    complete: bool,
+    trouble: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WiredView {
+    event: &'static str,
+    target: String,
+    current: bool,
+}
+
+/// Reads one agent's settings, reporting a failure to find them as trouble rather than
+/// as an error.
+///
+/// A missing `HOME` stops that one row from saying anything useful; it is not a reason
+/// for the whole panel to fail, because the other agent may well be fine.
+fn view(agent: Agent, token: &str) -> AgentView {
+    let (status, trouble) = match agents::status(agent, token) {
+        Ok(status) => {
+            let trouble = status.trouble.clone();
+            (Some(status), trouble)
+        }
+        Err(error) => (None, Some(error.to_string())),
+    };
+    AgentView {
+        key: agent.key(),
+        label: agent.label(),
+        proven: agent.proven(),
+        present: status.as_ref().is_some_and(|it| it.present),
+        path: status.as_ref().map(|it| it.path.display().to_string()).unwrap_or_default(),
+        events: agent.events(),
+        complete: status.as_ref().is_some_and(|it| it.complete(agent)),
+        wired: status
+            .map(|it| {
+                it.wired
+                    .into_iter()
+                    .map(|one| WiredView {
+                        event: one.event,
+                        target: one.target,
+                        current: one.current,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        trouble,
+    }
+}
+
+/// What every agent's settings say about MyTimeOff right now.
+async fn agents_status(State(daemon): State<Arc<Daemon>>) -> Json<Vec<AgentView>> {
+    Json(Agent::ALL.into_iter().map(|agent| view(agent, &daemon.token)).collect())
+}
+
+/// What changed, and what the agent looks like now.
+///
+/// The row comes back with the receipt so that connecting is one request rather than two:
+/// a panel that had to re-ask would show a stale row for as long as the second request
+/// took, on exactly the click where the user is watching for the answer.
+#[derive(Serialize)]
+struct Connected {
+    path: String,
+    /// Whether a file was already there - and so whether a backup was kept beside it.
+    replaced: bool,
+    backup: &'static str,
+    agent: AgentView,
+}
+
+#[derive(Serialize)]
+struct Disconnected {
+    removed: usize,
+    agent: AgentView,
+}
+
+/// Wires one agent to this daemon.
+async fn agent_connect(State(daemon): State<Arc<Daemon>>, Path(key): Path<String>) -> Response {
+    let Some(agent) = Agent::from_key(&key) else {
+        return no_such_agent(&key);
+    };
+    match agents::wire(agent, daemon.config.port, &daemon.token) {
+        Ok(outcome) => Json(Connected {
+            path: outcome.path.display().to_string(),
+            replaced: outcome.replaced,
+            backup: outcome.backup,
+            agent: view(agent, &daemon.token),
+        })
+        .into_response(),
+        // The message is the whole point of the failure: it names the file and says what
+        // about it could not be read or written, which is the only thing that tells
+        // somebody whether to fix a permission or fix a typo.
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+/// Takes the wiring back out.
+async fn agent_disconnect(State(daemon): State<Arc<Daemon>>, Path(key): Path<String>) -> Response {
+    let Some(agent) = Agent::from_key(&key) else {
+        return no_such_agent(&key);
+    };
+    match agents::unwire(agent) {
+        Ok(removed) => {
+            Json(Disconnected { removed, agent: view(agent, &daemon.token) }).into_response()
+        }
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+fn no_such_agent(key: &str) -> Response {
+    let known: Vec<&str> = Agent::ALL.into_iter().map(Agent::key).collect();
+    (StatusCode::NOT_FOUND, format!("no agent called {key:?}. There is {}", known.join(" and ")))
+        .into_response()
+}
+
 async fn require_token(
     State(daemon): State<Arc<Daemon>>,
     request: Request,
@@ -696,6 +830,12 @@ pub fn router(daemon: Arc<Daemon>) -> Router {
             get(library).post(library_upload).layer(DefaultBodyLimit::max(MAX_BOOK_BYTES)),
         )
         .route("/library/file", get(library_file))
+        // Wiring an agent from the window, so that the terminal is somewhere to go
+        // rather than somewhere to start. An endpoint rather than a shell command,
+        // because the reader is the same page in the window and in a browser tab and
+        // only one of those has a shell.
+        .route("/agents", get(agents_status))
+        .route("/agents/{key}", post(agent_connect).delete(agent_disconnect))
         // Applied last so it wraps every route above; a new route cannot be added
         // without inheriting authentication.
         .layer(middleware::from_fn_with_state(daemon.clone(), require_token))

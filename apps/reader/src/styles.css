@@ -132,3 +132,67 @@ body[data-reading="true"] #status { border-top-color: var(--line); }
   width: 7px; height: 7px; border-radius: 50%; background: #c2453d;
 }
 #link[data-connected="true"] { background: #4a8a5c; }
+
+/*
+ * The agent panel. Below the quiz's z-index on purpose: the gate is the one thing on this
+ * screen that must never be covered, and somebody who opened this and then hit a gate
+ * should be answering questions, not reading about hooks.
+ */
+#agents-open {
+  position: fixed; inset: 8px auto auto 8px; z-index: 5;
+  background: var(--bg); border: 1px solid var(--line); color: var(--muted);
+  border-radius: 999px; padding: 4px 11px; cursor: pointer;
+  font: 11px/1.4 ui-sans-serif, system-ui, sans-serif;
+}
+#agents-open:hover { color: var(--fg); }
+/* Nothing wired is the state worth a colour: the tool does nothing at all until it is. */
+#agents-open[data-state="loose"] { border-color: #b8892f; color: #b8892f; }
+#agents {
+  position: fixed; inset: 0; z-index: 15;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 32px; overflow-y: auto; background: var(--bg);
+}
+#agents h2 { margin: 0; font-size: 22px; }
+#agents-note { margin: 0; max-width: 60ch; color: var(--muted); text-align: center; }
+#agents-list { display: flex; flex-direction: column; gap: 14px; width: min(64ch, 100%); }
+#agents button {
+  background: none; border: 1px solid var(--line); color: var(--fg);
+  border-radius: 6px; padding: 5px 10px; cursor: pointer; font: inherit;
+}
+#agents button:hover:not(:disabled) { background: var(--line); }
+#agents button:disabled { color: var(--muted); cursor: default; }
+.agent {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px;
+  /* The one place the row's state is spent, so the rest of the card stays quiet. */
+  border-left: 3px solid var(--muted);
+}
+.agent[data-state="connected"] { border-left-color: #4f7a3f; }
+.agent[data-state="stale"] { border-left-color: #b8892f; }
+.agent > header { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+.agent h3 { margin: 0; font-size: 17px; }
+.agent-state, .agent-untested {
+  font: 11px/1.4 ui-sans-serif, system-ui, sans-serif; color: var(--muted);
+}
+.agent-untested {
+  padding: 2px 7px; border: 1px solid #b8892f; border-radius: 999px; color: #b8892f;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.agent p { margin: 0; }
+/* A path is the one thing here somebody may want to copy, so it is not ellipsised. */
+.agent-path, .agent-hooks {
+  font: 11px/1.5 ui-monospace, monospace; color: var(--muted);
+  word-break: break-all;
+}
+.agent-hooks { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.agent-hooks li { display: flex; gap: 10px; }
+.agent-event { flex: none; width: 17ch; color: var(--fg); }
+.agent-target { min-width: 0; }
+.agent-stale { color: #b8892f; }
+.agent-caution, .agent-trouble, .agent-problem, .agent-said {
+  font: 12px/1.5 ui-sans-serif, system-ui, sans-serif; max-width: 60ch;
+}
+.agent-caution { color: #b8892f; }
+.agent-trouble, .agent-problem { color: #c2453d; }
+.agent-said { color: var(--muted); }
+.agent-actions { display: flex; gap: 10px; }

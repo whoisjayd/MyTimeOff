@@ -1,8 +1,9 @@
-use std::io;
+use std::io::{self, Read};
 
 use mytimeoff_core::Locator;
 use mytimeoff_daemon::quiz::{self, Page, Provider};
 use mytimeoff_daemon::store::Store;
+use mytimeoff_daemon::agents::{self, Agent};
 use mytimeoff_daemon::{Daemon, autostart, bind, paths, secret, serve, settings, token};
 
 #[tokio::main]
@@ -34,12 +35,18 @@ async fn run() -> io::Result<()> {
         Some("key") => return store_key(word.as_deref()),
         Some("check") => return check().await,
         Some("autostart") => return autostart_command(word.as_deref()),
+        Some("hooks") => {
+            return hooks_command(word.as_deref(), std::env::args().nth(3).as_deref());
+        }
+        // Codex's end of the wire, and the one command here nobody types. See
+        // [`hook_shim`].
+        Some("hook") => return hook_shim().await,
         Some("help" | "--help" | "-h") => {
             println!("{USAGE}");
             return Ok(());
         }
         // Anything else is a typo. Ignoring it and starting the daemon meant that
-        // `mytimeoff-daemon --help` opened a server, and that a misspelt subcommand
+        // `mytimeoff --help` opened a server, and that a misspelt subcommand
         // opened a second one on a port that was already spoken for.
         Some(other) => {
             return Err(invalid(format!("no command called \"{other}\".
@@ -67,23 +74,12 @@ async fn run() -> io::Result<()> {
     println!("books:  {}", database_path.display());
     let (questions, note) = quiz::source_for(&config).map_err(invalid)?;
     println!("quiz:   {note}");
-    println!();
-    println!("Wire Claude Code by adding to .claude/settings.json:");
-    println!(
-        r#"  "hooks": {{
-    "UserPromptSubmit": [{{ "hooks": [{{ "type": "http", "url": "http://{addr}/hook",
-      "headers": {{ "Authorization": "Bearer $MYTIMEOFF_TOKEN" }},
-      "allowedEnvVars": ["MYTIMEOFF_TOKEN"], "async": true }}] }}],
-    "Stop": [ ...same, /hook... ],
-    "Notification": [ ...same, /hook... ]
-  }}"#
-    );
-
+    report_wiring(&secret);
     let daemon = Daemon::new(config, store, secret, questions);
     serve(listener, daemon).await
 }
 
-/// `mytimeoff-daemon check` - asks the configured provider for questions about two made-up
+/// `mytimeoff check` - asks the configured provider for questions about two made-up
 /// pages, and prints what came back.
 ///
 /// This exists because of how this feature fails. A wrong key, a model name the provider
@@ -209,8 +205,244 @@ fn store_key(word: Option<&str>) -> io::Result<()> {
     // enough to be worth anything to whoever is looking over your shoulder.
     let tail: String = key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
     println!("Stored (…{tail}) for {provider}. Restart the daemon to use it.");
-    println!("Check it works with:  mytimeoff-daemon check");
+    println!("Check it works with:  mytimeoff check");
     Ok(())
+}
+
+/// `mytimeoff hooks [install|status|remove] [claude-code|codex]` - the wiring.
+///
+/// The window does this too now, with a button and no terminal, over the same endpoint
+/// underneath. This stays for the two things a panel is bad at: wiring a machine from a
+/// script, and answering "why has the book stopped appearing" in one line of output.
+///
+/// Reporting covers every agent; writing names one. A report that left a row out would be
+/// worse than no report, whereas an `install` that quietly wrote into the config of an
+/// agent somebody does not even use is exactly the liberty this tool does not take.
+fn hooks_command(word: Option<&str>, which: Option<&str>) -> io::Result<()> {
+    match word {
+        None | Some("status") => report_hooks(which),
+        Some("install") => install_hooks(named(which)?),
+        Some("remove") => remove_hooks(named(which)?),
+        Some(other) => Err(invalid(format!(
+            "no hooks command called \"{other}\". Try: mytimeoff hooks install, status or remove"
+        ))),
+    }
+}
+
+/// Which agent a command is about.
+///
+/// Claude Code when nothing is named - it is the one whose wiring has actually been run
+/// against the real thing, so it is the one a bare command may safely mean.
+fn named(which: Option<&str>) -> io::Result<Agent> {
+    let Some(which) = which else {
+        return Ok(Agent::ClaudeCode);
+    };
+    Agent::from_key(which).ok_or_else(|| {
+        let known: Vec<&str> = Agent::ALL.into_iter().map(Agent::key).collect();
+        invalid(format!("no agent called \"{which}\". Try: {}", known.join(" or ")))
+    })
+}
+
+fn install_hooks(agent: Agent) -> io::Result<()> {
+    let config = settings::load_or_create(&paths::config()?)?;
+    // Creating the token here rather than reading it: the hooks can be wired before the
+    // daemon has ever run, and a hook carrying no token would only be turned away by the
+    // daemon that eventually did.
+    let secret = token::load_or_create(&paths::token()?)?;
+
+    // Said before the file is touched, not after, so that it is a warning rather than an
+    // apology.
+    if !agent.proven() {
+        println!("{} support has not been tested against a real install. What", agent.label());
+        println!("goes in below is written from its published hook format; if the book stops");
+        println!("appearing, this is the first thing to suspect.");
+        println!();
+    }
+
+    let outcome = agents::wire(agent, config.port, &secret)?;
+    println!("{} will now say when your agent starts and stops thinking.", agent.label());
+    println!("  {}", outcome.path.display());
+    for one in agents::status(agent, &secret)?.wired {
+        println!("  {:<17} {}", one.event, one.target);
+    }
+    if outcome.replaced {
+        println!("  what was there is beside it, as {}", outcome.backup);
+    }
+
+    println!();
+    match agent {
+        Agent::ClaudeCode => {
+            println!("That file now holds this daemon's token in plain text. It is worth nothing");
+            println!("away from this machine - the daemon listens on 127.0.0.1 and nowhere else");
+            println!("- but if you would rather it were not there:  mytimeoff hooks remove");
+        }
+        // Worth saying, because it is the one way this agent comes off better: the
+        // command in there runs this program, and this program reads the token itself.
+        Agent::Codex => {
+            println!("No token goes in that file. It names this program instead, which reads the");
+            println!("token off disk on the machine that wrote it.");
+        }
+    }
+    println!();
+    println!("Restart {}. Hooks are read when it starts.", agent.label());
+    Ok(())
+}
+
+fn remove_hooks(agent: Agent) -> io::Result<()> {
+    let path = agent.settings_path()?;
+    let removed = agents::unwire(agent)?;
+    if removed == 0 {
+        println!("There are no MyTimeOff hooks in {}.", path.display());
+        return Ok(());
+    }
+
+    let word = if removed == 1 { "hook" } else { "hooks" };
+    println!("Took {removed} MyTimeOff {word} out of {}.", path.display());
+    println!("What was there is beside it, as {}.", agent.backup());
+    println!("Restart {}.", agent.label());
+    Ok(())
+}
+
+fn report_hooks(which: Option<&str>) -> io::Result<()> {
+    let secret = current_token()?;
+    let chosen: Vec<Agent> =
+        if which.is_some() { vec![named(which)?] } else { Agent::ALL.to_vec() };
+
+    for (at, agent) in chosen.into_iter().enumerate() {
+        if at > 0 {
+            println!();
+        }
+        report_agent(agent, secret.as_deref())?;
+    }
+
+    if secret.is_none() {
+        println!();
+        println!("This machine has no token yet - one is made the first time MyTimeOff runs.");
+        println!("Wire these again afterwards:  mytimeoff hooks install");
+    }
+    Ok(())
+}
+
+fn report_agent(agent: Agent, secret: Option<&str>) -> io::Result<()> {
+    let status = agents::status(agent, secret.unwrap_or_default())?;
+    let untested = if agent.proven() { "" } else { "  (untested - see the README)" };
+    println!("{}{untested}", agent.label());
+    println!("  {}", status.path.display());
+
+    if status.wired.is_empty() {
+        match &status.trouble {
+            Some(trouble) => println!("  could not be read: {trouble}"),
+            None => println!("  nothing here points at MyTimeOff."),
+        }
+        println!();
+        println!("Wire it up with:  mytimeoff hooks install {}", agent.key());
+        return Ok(());
+    }
+
+    for event in agent.events().iter().copied() {
+        match status.wired.iter().find(|found| found.event == event) {
+            Some(found) => println!("  {event:<17} {}", found.target),
+            None => println!("  {event:<17} not wired"),
+        }
+    }
+    if let Some(trouble) = &status.trouble {
+        println!("  {trouble}");
+    }
+    // Only worth saying once there is a token to be wrong about: before that, every hook
+    // in the file reads as stale and the advice would be noise.
+    if secret.is_some() && !status.complete(agent) {
+        println!();
+        println!("These are not wired the way this machine would wire them now, so deliveries");
+        println!("are being turned away. Put it right with:  mytimeoff hooks install {}", agent.key());
+    }
+    Ok(())
+}
+
+/// The token as it stands, without making one.
+///
+/// `status` is a question, and a question that quietly wrote a new secret to disk would
+/// be a strange thing for one to do - not least because it would then report every hook
+/// in the file as carrying the wrong token.
+fn current_token() -> io::Result<Option<String>> {
+    let path = paths::token()?;
+    match std::fs::read_to_string(path) {
+        Ok(text) if !text.trim().is_empty() => Ok(Some(text.trim().to_string())),
+        _ => Ok(None),
+    }
+}
+
+/// `mytimeoff hook` - Codex's end of the wire.
+///
+/// Claude Code posts to a URL by itself. Codex runs a command, so something has to stand
+/// between the two, read the delivery off stdin and put it on the socket. This is that
+/// something, and nobody is ever meant to type it: it appears in `~/.codex/config.toml`
+/// and nowhere else, which is why it is not in `USAGE`.
+///
+/// It exits 0 whatever happens. A hook that fails is a hook that has failed the agent's
+/// turn, and no reading tool has any business doing that to somebody's work because its
+/// own daemon was not running.
+async fn hook_shim() -> io::Result<()> {
+    if let Err(why) = forward().await {
+        // To stderr, so that it lands in Codex's own log if anyone goes looking, and is
+        // out of the way if nobody does.
+        eprintln!("mytimeoff: {why}");
+    }
+    Ok(())
+}
+
+async fn forward() -> io::Result<()> {
+    let mut delivery = String::new();
+    io::stdin().read_to_string(&mut delivery)?;
+    if delivery.trim().is_empty() {
+        return Ok(());
+    }
+
+    let config = settings::load_or_create(&paths::config()?)?;
+    let secret = std::fs::read_to_string(paths::token()?)?;
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/hook", config.port))
+        .bearer_auth(secret.trim())
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        // Shorter than the timeout written into the config, so that the agent waits on
+        // this program rather than the other way round. Nothing here talks off the
+        // machine; two seconds is already long past anything that was going to work.
+        .timeout(std::time::Duration::from_secs(2))
+        .body(delivery)
+        .send()
+        .await
+        .map_err(|why| io::Error::other(format!("could not reach the daemon: {why}")))?;
+
+    if !response.status().is_success() {
+        return Err(io::Error::other(format!("the daemon answered {}", response.status())));
+    }
+    Ok(())
+}
+
+/// Says whether the coding agents are wired to this daemon, on the way past.
+///
+/// A daemon running with nothing ever reaching it looks exactly like a daemon running
+/// well, right up until a long turn goes by and no book appears. The usual cause is that
+/// nothing was ever wired, and one file read at startup is a cheap way to say so before
+/// an evening goes into finding out.
+fn report_wiring(token: &str) {
+    for agent in Agent::ALL {
+        let label = agent.label();
+        match agents::status(agent, token) {
+            Ok(status) if status.complete(agent) => {
+                println!("{label}:  {}", status.path.display());
+            }
+            // Nothing at all for an agent that is neither installed nor wired. A machine
+            // with one of the two on it should not be nagged at every startup about the
+            // other.
+            Ok(status) if !status.present && status.wired.is_empty() => {}
+            Ok(status) if status.wired.is_empty() => {
+                println!("{label}:  not wired - open MyTimeOff, or:  mytimeoff hooks install {}", agent.key());
+            }
+            Ok(_) => println!("{label}:  wired, but not correctly - run:  mytimeoff hooks status"),
+            // Not fatal. The daemon works; it is the report about it that did not.
+            Err(why) => println!("{label}:  could not be read ({why})"),
+        }
+    }
 }
 
 /// The name the entry appears under in Task Manager's Startup apps tab.
@@ -219,7 +451,7 @@ fn store_key(word: Option<&str>) -> io::Result<()> {
 /// the product's name and not a binary's.
 const LOGIN_ITEM: &str = "MyTimeOff";
 
-/// `mytimeoff-daemon autostart [on|off]` - whether MyTimeOff comes back after a reboot.
+/// `mytimeoff autostart [on|off]` - whether MyTimeOff comes back after a reboot.
 ///
 /// What gets registered is the reader window, not this daemon, and the reason is a console
 /// window: a `Run` entry pointing at a console program opens one at every sign-in and
@@ -347,18 +579,22 @@ fn invalid(message: String) -> io::Error {
 /// generator would think to write.
 const USAGE: &str = "MyTimeOff - reading that fills the time an agent spends thinking.
 
-  mytimeoff-daemon              start the daemon, and print how to wire the hooks
-  mytimeoff-daemon check        ask the configured model for questions about two
-                                sample pages, and show what came back
-  mytimeoff-daemon key [claude|gemini]
-                                store an API key in Windows Credential Manager
-  mytimeoff-daemon autostart [on|off|status]
-                                whether MyTimeOff comes back after you sign in
-  mytimeoff-daemon help         this
+  mytimeoff              start the daemon
+  mytimeoff hooks [install|status|remove] [claude-code|codex]
+                         wire a coding agent to this daemon, or take the wiring out.
+                         status reports both; install and remove mean Claude Code
+                         unless told otherwise
+  mytimeoff check        ask the configured model for questions about two sample
+                         pages, and show what came back
+  mytimeoff key [claude|gemini]
+                         store an API key in Windows Credential Manager
+  mytimeoff autostart [on|off|status]
+                         whether MyTimeOff comes back after you sign in
+  mytimeoff help         this
 
-The reading window is mytimeoff-shell, beside this program, and it starts a daemon
+MyTimeOff.exe, in the folder above this one, is the reading window - and it starts a daemon
 inside itself if none is running. So on most days none of this is needed: open the
-window.";
+app.";
 
 /// The port was taken.
 ///

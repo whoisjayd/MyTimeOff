@@ -48,6 +48,20 @@
           <button id="quiz-skip" type="button" hidden>Skip</button>
         </footer>
       </section>
+      <!--
+        The way in to the wiring, and the one control that is on screen before anything
+        else is: on a genuine first run there is no book, no status bar and no indicator,
+        which is exactly the moment somebody needs to find this.
+      -->
+      <button id="agents-open" type="button" data-state="loose">Connect your agent</button>
+      <section id="agents" hidden>
+        <h2>Your coding agent</h2>
+        <p id="agents-note"></p>
+        <div id="agents-list"></div>
+        <footer id="agents-actions">
+          <button id="agents-close" type="button">Done</button>
+        </footer>
+      </section>
       <span id="link" data-connected="false" title="daemon unreachable"></span>
     </main>
     <script type="module" src="/src/main.ts"></script>

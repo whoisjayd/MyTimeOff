@@ -2,6 +2,7 @@ import {
   AT_REST,
   ReadingSession,
   applyCommand,
+  type AgentKey,
   type Book,
   type BookFormat,
   type BookRenderer,
@@ -11,6 +12,7 @@ import {
   type SurfaceState,
   type Verdict,
 } from "@mytimeoff/core";
+import { AgentsView } from "./reader/agents-view";
 import { EpubRenderer } from "./reader/epub-renderer";
 import { GateView } from "./reader/gate-view";
 import { DomVisibility } from "./reader/dom-visibility";
@@ -58,6 +60,11 @@ async function rendererFor(
     return new PdfRenderer(data, viewer, start);
   }
   return new EpubRenderer(data, viewer, start);
+}
+
+/** Whatever an error turns out to be, said in one line. */
+function saying(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function showError(message: string): void {
@@ -178,10 +185,9 @@ async function report(view: PageView): Promise<void> {
 /** Every entry point funnels through here so no failure can be silent. */
 function handleFile(file: File): void {
   adopt(file).catch((error: unknown) => {
-    const detail = error instanceof Error ? error.message : String(error);
     showError(`Could not open "${file.name}"
 
-${detail}`);
+${saying(error)}`);
     console.error("[mytimeoff] failed to open book", error);
   });
 }
@@ -207,7 +213,7 @@ async function openGate(): Promise<void> {
   try {
     gateView.ask(await daemon.gate());
   } catch (error: unknown) {
-    gateView.problem(error instanceof Error ? error.message : String(error));
+    gateView.problem(saying(error));
     console.warn("[mytimeoff] could not open the gate", error);
   }
 }
@@ -221,7 +227,66 @@ async function rule(ask: () => Promise<Verdict>): Promise<void> {
     // leaving a stale set of questions on screen that can never be accepted.
     if (verdict.outcome === "refused" && verdict.reason === "wrong_quiz") await openGate();
   } catch (error: unknown) {
-    gateView.problem(error instanceof Error ? error.message : String(error));
+    gateView.problem(saying(error));
+  }
+}
+
+const agentsView = new AgentsView(document, {
+  onConnect: (key) => void connectAgent(key),
+  onDisconnect: (key) => void disconnectAgent(key),
+  // The badge outlives the panel, so closing is the moment to make sure it is still true
+  // of a settings file somebody may have edited elsewhere while this was open.
+  onClose: () => void showAgents({ openIfLoose: false }),
+});
+
+/**
+ * Asks the daemon what the agents' settings say, and draws it.
+ *
+ * `openIfLoose` is the reason this panel exists. Nothing about MyTimeOff works until an
+ * agent is wired to it - no takeover, no indicator, no gate - and a window that opened
+ * looking perfectly healthy while being deaf was the old first-run experience, fixed
+ * only by knowing to type a command nobody had mentioned.
+ */
+async function showAgents({ openIfLoose }: { openIfLoose: boolean }): Promise<void> {
+  try {
+    const wirings = await daemon.agents();
+    agentsView.show(wirings);
+    if (openIfLoose && !wirings.some((one) => one.complete)) agentsView.open();
+  } catch (error: unknown) {
+    // Only worth showing where somebody is looking. The daemon being unreachable already
+    // has a dot in the corner for it.
+    if (agentsView.isOpen) agentsView.unreachable(saying(error));
+    console.warn("[mytimeoff] could not read the agent wiring", error);
+  }
+}
+
+async function connectAgent(key: AgentKey): Promise<void> {
+  agentsView.working(key, "Writing the settings file…");
+  try {
+    const { agent, backup } = await daemon.connectAgent(key);
+    const kept = backup ? ` What was there is beside it, as ${backup}.` : "";
+    agentsView.changed(
+      agent,
+      `Connected.${kept} Restart ${agent.label} - hooks are read when it starts.`,
+    );
+  } catch (error: unknown) {
+    agentsView.problem(key, saying(error));
+  }
+}
+
+async function disconnectAgent(key: AgentKey): Promise<void> {
+  agentsView.working(key, "Taking the hooks out…");
+  try {
+    const { agent, removed } = await daemon.disconnectAgent(key);
+    const what = removed === 1 ? "One hook" : `${removed} hooks`;
+    agentsView.changed(
+      agent,
+      removed === 0
+        ? "There was nothing of ours in that file."
+        : `${what} taken out. Restart ${agent.label}.`,
+    );
+  } catch (error: unknown) {
+    agentsView.problem(key, saying(error));
   }
 }
 
@@ -309,3 +374,8 @@ daemon
   .catch((error: unknown) => {
     console.warn("[mytimeoff] could not reopen the kept book", error);
   });
+
+// Asked for at every launch, not only the first. Hooks live in a file the user can edit,
+// an agent can rewrite on update, and a changed port can leave behind: all of which look
+// identical from in here, and all of which stop the book from ever appearing.
+void showAgents({ openIfLoose: true });

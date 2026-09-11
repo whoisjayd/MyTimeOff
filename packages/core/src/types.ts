@@ -143,6 +143,51 @@ export interface AgentEvent {
   kind: "agent_start" | "agent_done" | "agent_blocked";
   /** Agent session id, so one window's completion cannot clear another's switch. */
   sessionId: string;
-  source: "claude-code" | "codex";
+  source: AgentKey;
   ts: number;
+}
+
+/**
+ * A coding agent MyTimeOff can wire itself into.
+ *
+ * The same words the daemon uses in a URL, deliberately: this is the name the two sides
+ * agree on, and it may not be reworded the day one of them prints something nicer.
+ */
+export type AgentKey = "claude-code" | "codex";
+
+/** One MyTimeOff hook found in an agent's settings. */
+export interface WiredHook {
+  event: string;
+  /** Where it points. A URL for Claude Code, a command line for Codex. */
+  target: string;
+  /**
+   * Whether it is wired the way this machine would wire it now.
+   *
+   * The failure this catches is invisible otherwise: a hook carrying a token that has
+   * since been replaced, or naming an install that has since moved, looks exactly like a
+   * working one and is turned away at the door every time it fires.
+   */
+  current: boolean;
+}
+
+/** What one agent's settings say about MyTimeOff. */
+export interface AgentWiring {
+  key: AgentKey;
+  label: string;
+  /**
+   * Whether this wiring has ever been run against the real thing. `false` is something
+   * to show, not something to hide: it is the difference between a button that works and
+   * a button that ought to.
+   */
+  proven: boolean;
+  /** Whether the agent's own config directory exists - "is this installed", roughly. */
+  present: boolean;
+  path: string;
+  /** Every event this agent would be wired for, whether or not it currently is. */
+  events: string[];
+  hooks: WiredHook[];
+  /** Every event wired, and every one of them pointing where it should today. */
+  complete: boolean;
+  /** Why the settings could not be read, if they could not. */
+  trouble: string | null;
 }

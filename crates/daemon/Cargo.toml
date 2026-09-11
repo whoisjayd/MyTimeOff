@@ -19,9 +19,15 @@ rand = "0.10.2"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "http2"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+# preserve_order, because `mytimeoff hooks install` writes back a file somebody else
+# wrote. Without it every key in their ~/.claude/settings.json comes back alphabetised,
+# which is a diff they did not ask for in a file they may well have in git.
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "time", "net", "io-util"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
+# Format-preserving TOML, because `~/.codex/config.toml` is somebody else's file: a
+# round trip through an ordinary parser would come back without their comments in it.
+toml_edit = "0.25.15"
 
 # The credential store and the startup list, and only where there are ones.
 [target.'cfg(windows)'.dependencies]

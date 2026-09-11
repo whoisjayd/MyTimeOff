@@ -1,4 +1,6 @@
 import type {
+  AgentKey,
+  AgentWiring,
   Answer,
   AskedQuestion,
   Book,
@@ -270,4 +272,70 @@ export async function keepBook(bookId: string, bytes: ArrayBuffer): Promise<void
     headers: { "content-type": "application/octet-stream" },
     body: bytes,
   });
+}
+
+/**
+ * The agent wiring, as the daemon reads it off disk.
+ *
+ * An endpoint rather than something the window does for itself, because this page is the
+ * same page in a browser tab and inside the Tauri window, and only one of those has a
+ * filesystem. What the window adds is a shorter path to it, not a different one.
+ */
+interface WireAgent {
+  key: AgentKey;
+  label: string;
+  proven: boolean;
+  present: boolean;
+  path: string;
+  events: string[];
+  wired: { event: string; target: string; current: boolean }[];
+  complete: boolean;
+  trouble: string | null;
+}
+
+function readAgent(wire: WireAgent): AgentWiring {
+  return {
+    key: wire.key,
+    label: wire.label,
+    proven: wire.proven,
+    present: wire.present,
+    path: wire.path,
+    events: wire.events,
+    hooks: wire.wired,
+    complete: wire.complete,
+    trouble: wire.trouble,
+  };
+}
+
+/** What every agent's settings say about MyTimeOff right now. */
+export async function agents(): Promise<AgentWiring[]> {
+  const wire = (await (await send("agents")).json()) as WireAgent[];
+  return wire.map(readAgent);
+}
+
+/** What connecting changed, so the panel can say it without asking again. */
+export interface Connected {
+  agent: AgentWiring;
+  /** The copy kept beside the settings, where there was something to copy. */
+  backup: string | null;
+}
+
+/** Writes MyTimeOff into one agent's settings, replacing any wiring already there. */
+export async function connectAgent(key: AgentKey): Promise<Connected> {
+  const response = await send(`agents/${encodeURIComponent(key)}`, {});
+  const wire = (await response.json()) as {
+    replaced: boolean;
+    backup: string;
+    agent: WireAgent;
+  };
+  return { agent: readAgent(wire.agent), backup: wire.replaced ? wire.backup : null };
+}
+
+/** Takes it back out, and says how many hooks there were to take. */
+export async function disconnectAgent(key: AgentKey): Promise<{ agent: AgentWiring; removed: number }> {
+  const response = await send(`agents/${encodeURIComponent(key)}`, undefined, {
+    method: "DELETE",
+  });
+  const wire = (await response.json()) as { removed: number; agent: WireAgent };
+  return { agent: readAgent(wire.agent), removed: wire.removed };
 }
