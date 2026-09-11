@@ -19,7 +19,7 @@ Windows only, for now.
 ## Install
 
 Download `MyTimeOff_0.1.0_x64-setup.exe` from the
-[latest release](https://github.com/YOUR-USERNAME/MyTimeOff/releases) and run it. It
+[latest release](https://github.com/Yash-Bhambhani/MyTimeOff/releases) and run it. It
 installs for you alone, needs no administrator, and puts about 25 MB in
 `%LOCALAPPDATA%\MyTimeOff`.
 

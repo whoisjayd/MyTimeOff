@@ -21,6 +21,7 @@
     "targets": ["nsis"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
     "publisher": "MyTimeOff",
+    "homepage": "https://github.com/Yash-Bhambhani/MyTimeOff",
     "shortDescription": "Read a book in the time your coding agent spends thinking.",
     "longDescription": "MyTimeOff watches for the long turns your AI coding agent takes, puts a book on the screen while it works, and asks what you read before it lets you back.",
     "category": "Productivity",
