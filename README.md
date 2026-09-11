@@ -87,7 +87,7 @@ Set `mode` in the config file. The default is `strict`.
 
 | Mode | Leaving the reader |
 | --- | --- |
-| `strict` | Answer questions about the pages you were shown. Two in three to pass. Fail, and you get one more attempt — then it lets you out anyway. |
+| `strict` | Answer questions about the pages you were shown. Two in three to pass — on a short stretch that is one question and one right answer. Fail, and you get one more attempt — then it lets you out anyway. |
 | `lenient` | You are asked, but you may skip. |
 | `free` | No questions. The reader still appears and still counts pages. |
 

@@ -113,6 +113,17 @@ export type Gate =
       quizId: string;
       questions: AskedQuestion[];
       policy: Policy;
+      /**
+       * How many of *these* questions have to be right: the policy's ratio already
+       * applied to the number asked. Null where nothing has to be.
+       *
+       * Separate from `policy.passMark` because the two answer different questions. The
+       * ratio is the rule and is the same for every gate in this mode; this is what the
+       * rule costs the sheet in front of you, which is the only one of the two worth
+       * saying out loud. Applying it here rather than in the daemon would make the pass
+       * mark exist twice, and the surface does not get to decide what a pass is.
+       */
+      needed: number | null;
       attemptsLeft: number;
     }
   | { gate: "released"; reason: Release };

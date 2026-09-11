@@ -74,7 +74,8 @@ export class GateView {
     this.#quizId = gate.quizId;
     this.#asked = gate.questions;
     this.#form.replaceChildren(...gate.questions.map((question) => this.#draw(question)));
-    this.#note.textContent = this.#brief(gate.policy.passMark, gate.attemptsLeft);
+    this.#note.textContent =
+      this.#brief(gate.needed, gate.questions.length, gate.attemptsLeft);
     this.#submit.hidden = false;
     this.#submit.disabled = false;
     // The one thing the policy is for: a skip button that exists only where skipping does.
@@ -106,10 +107,20 @@ export class GateView {
     this.#submit.hidden = true;
   }
 
-  #brief(passMark: { correct: number; of: number } | null, attemptsLeft: number): string {
-    const bar = passMark
-      ? `${passMark.correct} of every ${passMark.of} must be right.`
-      : "Answering is enough; nothing has to be right.";
+  /**
+   * What the gate costs, in the questions on the sheet rather than in the abstract.
+   *
+   * The daemon's rule is a ratio - two of every three - and saying it that way was wrong
+   * whenever the sheet was not three questions long: a page read is a question asked, so
+   * a short stretch produces one question, and "2 of every 3 must be right" over a single
+   * question reads as a bar that cannot be cleared. The daemon now sends the ratio already
+   * applied, and this only has to say it.
+   */
+  #brief(needed: number | null, asked: number, attemptsLeft: number): string {
+    const bar =
+      needed === null
+        ? "Answering is enough; nothing has to be right."
+        : `${needed} of ${asked} must be right.`;
     return `${bar} ${tries(attemptsLeft)} left.`;
   }
 

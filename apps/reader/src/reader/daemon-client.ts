@@ -147,6 +147,7 @@ type WireGate =
         retries: number;
         skippable: boolean;
       };
+      needed: number | null;
       attempts_left: number;
     }
   | { gate: "released"; reason: Release };
@@ -199,6 +200,7 @@ export async function gate(): Promise<Gate> {
       retries: wire.policy.retries,
       skippable: wire.policy.skippable,
     },
+    needed: wire.needed,
     attemptsLeft: wire.attempts_left,
   };
 }

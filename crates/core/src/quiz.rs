@@ -161,6 +161,20 @@ impl PassMark {
         }
         (score.correct as u64) * (self.of as u64) >= (self.correct as u64) * (score.total as u64)
     }
+
+    /// The fewest right answers out of `total` that clear this bar.
+    ///
+    /// The same arithmetic as [`met`](Self::met), asked forwards, and here so that it is
+    /// asked in one language rather than two. A surface has to tell somebody what the
+    /// gate costs *before* they answer, and the ratio alone does not say: "two of every
+    /// three" on a sheet with one question on it reads as a bar that cannot be cleared,
+    /// when in fact one right answer clears it.
+    pub fn needed(&self, total: u32) -> u32 {
+        // ceil(correct * total / of), in integers. Clamped because a bar set above its
+        // own denominator still cannot ask for more answers than were asked for.
+        let wanted = u64::from(self.correct) * u64::from(total);
+        wanted.div_ceil(u64::from(self.of).max(1)).min(u64::from(total)) as u32
+    }
 }
 
 /// What a mode actually means, once you stop describing it in adjectives.
@@ -357,6 +371,35 @@ mod tests {
             generated_at: 0,
             pre_generated: false,
         }
+    }
+
+    /// The bar a surface shows and the bar the daemon marks against must be the same bar.
+    ///
+    /// Checked against `met` rather than against the formula, because the formula is the
+    /// thing under test: if `needed` ever disagrees, the gate tells people one price and
+    /// charges another.
+    #[test]
+    fn what_a_gate_costs_is_the_same_number_it_marks_against() {
+        let mark = PassMark { correct: 2, of: 3 };
+        for total in 0..=12u32 {
+            let needed = mark.needed(total);
+            assert!(needed <= total, "{needed} of {total} is more than was asked");
+            for correct in 0..=total {
+                let score =
+                    Score { correct: correct as usize, total: total as usize, answered: 0 };
+                assert_eq!(
+                    mark.met(&score),
+                    correct >= needed,
+                    "{correct} of {total} against a bar of {needed}",
+                );
+            }
+        }
+    }
+
+    /// The case that started this: one page read, so one question asked.
+    #[test]
+    fn a_single_question_under_a_two_in_three_bar_needs_one_right_answer() {
+        assert_eq!(PassMark { correct: 2, of: 3 }.needed(1), 1);
     }
 
     /// An answer sheet where the first `right` questions are correct and the rest wrong.

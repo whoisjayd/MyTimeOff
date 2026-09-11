@@ -468,7 +468,18 @@ async fn progress(State(daemon): State<Arc<Daemon>>) -> Response {
 #[derive(Serialize)]
 #[serde(tag = "gate", rename_all = "snake_case")]
 enum GateView {
-    Open { quiz_id: String, questions: Vec<AskedQuestion>, policy: Policy, attempts_left: u32 },
+    Open {
+        quiz_id: String,
+        questions: Vec<AskedQuestion>,
+        policy: Policy,
+        /// The policy's ratio applied to the questions actually asked: how many of *these*
+        /// have to be right. None where nothing has to be. Sent rather than left for a
+        /// surface to work out, because a surface that worked it out would be a second
+        /// implementation of the pass mark, and two of those eventually disagree - at
+        /// which point the gate quotes one price and charges another.
+        needed: Option<u32>,
+        attempts_left: u32,
+    },
     /// Nothing could be asked, so nothing is owed. See [`Release::Ungated`].
     Released { reason: Release },
 }
@@ -570,10 +581,13 @@ fn view_of(gate: &Gate) -> GateView {
     if gate.quiz().questions.is_empty() {
         return GateView::Released { reason: Release::Ungated };
     }
+    let questions = gate.quiz().for_display();
+    let policy = gate.policy();
     GateView::Open {
         quiz_id: gate.quiz().id.clone(),
-        questions: gate.quiz().for_display(),
-        policy: gate.policy(),
+        needed: policy.pass_mark.map(|mark| mark.needed(questions.len() as u32)),
+        questions,
+        policy,
         attempts_left: gate.attempts_left(),
     }
 }

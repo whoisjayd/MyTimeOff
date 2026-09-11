@@ -376,6 +376,24 @@ async fn the_gate_asks_about_what_was_just_read() {
     assert!(!body.contains("answer_index"), "the answer key must stay in the daemon: {body}");
 }
 
+/// The bar the gate quotes is the bar it marks against.
+///
+/// A page read is a question asked, so a short stretch produces a short quiz - and the
+/// mode's ratio said out loud over a one-question sheet ("two of every three") reads as a
+/// bar nobody can clear. What the surface needs is the ratio already applied, and it is
+/// the daemon's to apply.
+#[tokio::test]
+async fn the_gate_says_how_many_of_these_questions_must_be_right() {
+    let addr = start(ReaderMode::Strict).await;
+    at_the_gate(addr, 4).await;
+
+    let (_, body) = get(addr, "/gate").await;
+    let asked = body.matches(r#""prompt":"#).count();
+    assert_eq!(asked, 3, "questions_per_gate caps the sheet at three: {body}");
+    // Two in three, on three questions.
+    assert!(body.contains(r#""needed":2"#), "{body}");
+}
+
 #[tokio::test]
 async fn asking_twice_returns_the_same_quiz() {
     // A reader that reconnects mid-gate must not be handed a fresh set of attempts.
