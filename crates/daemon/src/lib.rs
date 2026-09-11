@@ -11,6 +11,7 @@ pub mod quiz;
 pub mod secret;
 pub mod settings;
 pub mod store;
+pub mod text;
 pub mod token;
 
 use std::convert::Infallible;

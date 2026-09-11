@@ -273,7 +273,7 @@ pub fn remove() -> io::Result<usize> {
 /// alternative - starting from `{}` and writing that back - would delete settings this
 /// tool was only ever asked to add to.
 pub fn read(path: &Path) -> io::Result<Value> {
-    let text = match fs::read_to_string(path) {
+    let text = match crate::text::read(path) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(json!({})),
         Err(error) => return Err(error),

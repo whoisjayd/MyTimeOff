@@ -9,13 +9,15 @@ use std::path::Path;
 
 use mytimeoff_core::Config;
 
+use crate::text;
+
 /// Reads the config, writing the defaults out on first run.
 ///
 /// Writing the file rather than keeping the defaults in memory is deliberate: a config
 /// you cannot see is a config you cannot edit, and the whole point of these knobs is that
 /// they get turned.
 pub fn load_or_create(path: &Path) -> io::Result<Config> {
-    match fs::read_to_string(path) {
+    match text::read(path) {
         Ok(text) => Config::parse(&text).map_err(|error| {
             // Refusing to start beats starting on settings the user did not choose:
             // silently falling back to strict mode after a typo would gate their exit
@@ -77,6 +79,23 @@ mod tests {
         let config = load_or_create(&path).expect("load");
         assert_eq!(config.mode, ReaderMode::Free);
         assert_eq!(config.grace_ms, 3);
+
+        let _ = fs::remove_dir_all(path.parent().expect("parent"));
+    }
+
+    /// The file the README tells people to edit, saved by something that marks it.
+    ///
+    /// This one is worth a test of its own rather than trusting `text`: the failure it
+    /// guards against is the daemon refusing to start at all, and in the window there is
+    /// no console for it to say so on.
+    #[test]
+    fn a_config_saved_with_a_byte_order_mark_still_loads() {
+        let path = scratch("bom");
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(&path, "\u{feff}{\"mode\":\"free\",\"grace_ms\":3}").expect("write");
+
+        let config = load_or_create(&path).expect("a mark is not a syntax error");
+        assert_eq!(config.mode, ReaderMode::Free);
 
         let _ = fs::remove_dir_all(path.parent().expect("parent"));
     }

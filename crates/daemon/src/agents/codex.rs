@@ -323,7 +323,7 @@ pub fn unwire(doc: &mut DocumentMut) -> io::Result<usize> {
 /// A file that is there and will not parse stops everything. Starting from blank and
 /// writing that back would delete a config this tool was only ever asked to add to.
 pub fn read(path: &Path) -> io::Result<DocumentMut> {
-    let text = match fs::read_to_string(path) {
+    let text = match crate::text::read(path) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error),
