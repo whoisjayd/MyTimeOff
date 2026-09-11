@@ -38,6 +38,45 @@ static WANTED: AtomicBool = AtomicBool::new(false);
 /// after a restart is a smaller cost than a marker file that can go stale.
 static HINTED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the daemon is holding the screen right now.
+///
+/// Not the inverse of [`WANTED`]: that one records who asked for the window, and is false
+/// both during a takeover and before anybody has asked for anything. This one is set only
+/// by the two commands that are the daemon speaking - `show_reader` and `hide_reader` -
+/// which is the whole of what it means for the screen to be taken.
+static HELD: AtomicBool = AtomicBool::new(false);
+
+/// Records who the screen belongs to, and takes the minimise button away while it is not
+/// the person in front of it.
+///
+/// Minimising is the third way out of a takeover, after the X and Escape, and the only one
+/// no code had an opinion about. The gate exists to be answered; a window that can be put
+/// on the taskbar and forgotten is a gate with a skip button drawn on the title bar - in
+/// strict mode, where skipping is the one thing the policy refuses.
+fn hold(window: &WebviewWindow, held: bool) {
+    HELD.store(held, Ordering::Relaxed);
+    // Greying the button out is the half that explains itself: the control is visibly not
+    // available, rather than clicked and silently undone. See `resized` for the other half.
+    let _ = window.set_minimizable(!held);
+}
+
+/// Comes back if the window was minimised out from under a takeover.
+///
+/// The button being gone is not the whole story on Windows: Show Desktop, Win+D and
+/// Win+M put every window away, button or no button. So the last resort is simply to
+/// return - and only while the daemon is holding the screen, because a window somebody
+/// opened themselves is theirs to put away, and a program that fought that would be one
+/// nobody opens twice.
+pub fn resized(window: &WebviewWindow) {
+    if !HELD.load(Ordering::Relaxed) {
+        return;
+    }
+    if window.is_minimized().unwrap_or(false) {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 /// Answers the window's close button.
 ///
 /// The X means two different things and the difference is already recorded in [`WANTED`].
@@ -61,6 +100,7 @@ pub fn close_requested(window: &WebviewWindow, bridge: SocketAddr) {
             // A window that will not close is a worse failure than one that closes
             // without asking, so a daemon that cannot be reached does not get a veto.
             eprintln!("takeover: could not ask the daemon to release the screen: {error}");
+            hold(&window, false);
             let _ = window.set_always_on_top(false);
             let _ = window.hide();
         }
@@ -167,6 +207,7 @@ fn take(window: &WebviewWindow) {
     // earlier has been answered. Without this, opening the window once would stop it ever
     // getting out of the way again.
     WANTED.store(false, Ordering::Relaxed);
+    hold(window, true);
     let _ = window.show();
     let _ = window.set_always_on_top(true);
     let _ = window.unminimize();
@@ -199,6 +240,10 @@ pub fn raise(window: &WebviewWindow) {
 /// [`WANTED`] existed, closed the window a second after it was clicked open and looked
 /// exactly like a program that does not start.
 fn release(window: &WebviewWindow) {
+    // Before the early return below: the screen is given back either way, and a window
+    // left with no minimise button because somebody happened to click the tray icon
+    // during a takeover would stay that way until the next one.
+    hold(window, false);
     let _ = window.set_always_on_top(false);
     if WANTED.load(Ordering::Relaxed) {
         return;

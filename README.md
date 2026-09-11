@@ -61,7 +61,9 @@ second copy; it brings the one you have back to the front.
 
 While the reader has the screen, the X means the same thing as the **Back** button and
 the Escape key: *I want to leave*. In `strict` mode that asks the questions first —
-closing the window is not a way around the gate.
+closing the window is not a way around the gate, and neither is minimising it: the
+minimise button is unavailable until the screen is yours again. **Quit** in the tray menu
+still works, because a program you cannot stop is a program you uninstall.
 
 `mytimeoff autostart on` makes it come back after you sign in. That launch is the one
 exception to all of the above: it starts out of sight, because a book that opens itself

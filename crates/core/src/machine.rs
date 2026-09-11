@@ -446,6 +446,25 @@ mod tests {
         assert_eq!(m.handle(Event::ExitRequested { at: 25_000 }), vec![Command::StartQuiz]);
     }
 
+    /// Asking to leave again, from behind the gate, is not a second chance.
+    ///
+    /// This is what the window's X does while the questions are still being written: it
+    /// asks the same thing `#back` and Escape ask, and there is no way for it to know
+    /// that the asking already happened. The answer has to be silence - a machine that
+    /// released here would make pressing X twice the way out of strict mode, and the
+    /// second press is the easy one, because the first one is what put the gate there.
+    #[test]
+    fn asking_to_leave_from_behind_the_gate_changes_nothing() {
+        let mut m = machine();
+        reading(&mut m);
+        m.handle(Event::ExitRequested { at: 25_000 });
+
+        assert_eq!(m.handle(Event::ExitRequested { at: 26_000 }), Vec::new());
+        assert!(matches!(m.state(), State::Gate { .. }), "{:?}", m.state());
+        assert_eq!(m.handle(Event::ExitRequested { at: 27_000 }), Vec::new());
+        assert!(matches!(m.state(), State::Gate { .. }), "{:?}", m.state());
+    }
+
     #[test]
     fn free_mode_releases_without_a_quiz() {
         let mut m = Machine::new(ReaderMode::Free, GRACE);

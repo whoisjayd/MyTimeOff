@@ -112,17 +112,22 @@ fn main() {
                 }
             };
 
-            if trayed {
-                let closing = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        // Nothing here decides whether the window may go. `takeover` asks
-                        // the daemon, when the daemon is the one holding the screen.
-                        api.prevent_close();
-                        takeover::close_requested(&closing, addr);
-                    }
-                });
-            }
+            let watched = window.clone();
+            window.on_window_event(move |event| match event {
+                // Nothing here decides whether the window may go. `takeover` asks the
+                // daemon, when the daemon is the one holding the screen. Guarded on
+                // `trayed` for the reason above: with no icon to click, an unclosable
+                // window is a program nobody can reach, so the X goes back to quitting.
+                tauri::WindowEvent::CloseRequested { api, .. } if trayed => {
+                    api.prevent_close();
+                    takeover::close_requested(&watched, addr);
+                }
+                // Minimising is how a window leaves the screen without anybody pressing
+                // anything that looks like leaving. Windows reports it as a resize; what
+                // to do about it is `takeover`'s business, not this file's.
+                tauri::WindowEvent::Resized(_) => takeover::resized(&watched),
+                _ => {}
+            });
 
             takeover::watch(window, addr);
             Ok(())
