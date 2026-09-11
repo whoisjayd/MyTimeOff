@@ -47,14 +47,21 @@ in it alone. Whatever was there is copied to a `.mytimeoff-backup` beside it fir
 
 ### While it is running
 
-MyTimeOff is the window. It listens for your agent for as long as the window is open,
-and closing the window stops it — the hooks stay in place, but nothing is on the other
-end of them, so the book stops appearing. Opening it from the Start menu again is all it
-takes to start listening; a second click never opens a second copy, it just brings the
-one you have back to the front.
+Closing the window does not stop MyTimeOff. It carries on listening from the
+notification area — the `^` at the right-hand end of your taskbar — and the book still
+appears when a turn runs long. Click the icon to open the reader again; right-click it
+for **Quit**, which is the way to actually stop it.
 
-Between turns the window gets out of the way rather than closing, so most of the time
-you will not see it until an agent starts thinking.
+Windows files a new tray icon under that `^` rather than showing it, so the first time
+you close the window MyTimeOff says where it went.
+
+Between turns the window gets out of the way on its own, so most of the time you will
+not see it until an agent starts thinking. A second click on the shortcut never opens a
+second copy; it brings the one you have back to the front.
+
+While the reader has the screen, the X means the same thing as the **Back** button and
+the Escape key: *I want to leave*. In `strict` mode that asks the questions first —
+closing the window is not a way around the gate.
 
 `mytimeoff autostart on` makes it come back after you sign in. That launch is the one
 exception to all of the above: it starts out of sight, because a book that opens itself

@@ -20,6 +20,7 @@
 mod bridge;
 mod host;
 mod takeover;
+mod tray;
 
 use std::io;
 
@@ -28,6 +29,9 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 fn main() {
     tauri::Builder::default()
+        // Used once, best-effort, to say where the window went the first time somebody
+        // closes it. See `takeover::hint`.
+        .plugin(tauri_plugin_notification::init())
         // One MyTimeOff, however many times the icon is clicked. Without this a second
         // launch finds the port taken, carries on regardless, and leaves a process with
         // no window behind - which is indistinguishable, from the outside, from clicking
@@ -95,6 +99,29 @@ fn main() {
 
             if !at_login {
                 takeover::raise(&window);
+            }
+
+            // Close-to-hide is only safe when there is somewhere to click. If the icon
+            // could not be created, the X goes back to quitting: a hidden window with no
+            // icon is a program nobody can reach, which is the bug this all started with.
+            let trayed = match tray::install(app.handle()) {
+                Ok(()) => true,
+                Err(error) => {
+                    eprintln!("no tray icon ({error}); closing the window will quit");
+                    false
+                }
+            };
+
+            if trayed {
+                let closing = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        // Nothing here decides whether the window may go. `takeover` asks
+                        // the daemon, when the daemon is the one holding the screen.
+                        api.prevent_close();
+                        takeover::close_requested(&closing, addr);
+                    }
+                });
             }
 
             takeover::watch(window, addr);

@@ -17,16 +17,72 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use tauri::WebviewWindow;
+use tauri::{Manager, WebviewWindow};
+use tauri_plugin_notification::NotificationExt;
 
 /// Whether the window is up because a person asked for it, rather than because a turn
-/// started. Set by [`raise`], cleared by [`take`], obeyed by [`release`].
+/// started. Set by [`raise`]; cleared by [`take`] and by [`close_requested`], which are
+/// the two ways that answer is spent; obeyed by [`release`] and [`close_requested`].
 ///
 /// A process-wide static rather than state threaded through: there is exactly one reader
 /// window, and `tauri-plugin-single-instance` is what makes that true of the whole
 /// machine. Relaxed ordering is enough because nothing else is published alongside it -
 /// the only question ever asked of it is "did somebody click?".
 static WANTED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the tray has been pointed out yet in this run.
+///
+/// Windows files a new tray icon under the `^` overflow, so the first close-to-hide is
+/// the one moment a person can reasonably conclude the program is gone. Once per run
+/// rather than once ever: it needs no file on disk to remember, and being told again
+/// after a restart is a smaller cost than a marker file that can go stale.
+static HINTED: AtomicBool = AtomicBool::new(false);
+
+/// Answers the window's close button.
+///
+/// The X means two different things and the difference is already recorded in [`WANTED`].
+/// A window somebody opened to look at is theirs to close, and nothing was read, so there
+/// is no toll to pay and this hides it directly. A window the daemon put on the screen is
+/// a different matter: closing it is asking to leave the reader, which is what `#back`
+/// and Escape already ask, and the daemon decides what that costs. In strict mode the
+/// answer is a quiz, the window stays up to show it, and the X has not been an escape
+/// hatch - which it silently would have been, had this hidden the window itself.
+pub fn close_requested(window: &WebviewWindow, bridge: SocketAddr) {
+    if WANTED.swap(false, Ordering::Relaxed) {
+        let _ = window.hide();
+        hint(window);
+        return;
+    }
+
+    let url = format!("http://{bridge}/daemon/exit");
+    let window = window.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = reqwest::Client::new().post(&url).send().await {
+            // A window that will not close is a worse failure than one that closes
+            // without asking, so a daemon that cannot be reached does not get a veto.
+            eprintln!("takeover: could not ask the daemon to release the screen: {error}");
+            let _ = window.set_always_on_top(false);
+            let _ = window.hide();
+        }
+    });
+}
+
+/// Says where the window went, once.
+///
+/// Best-effort on purpose: a notification that does not appear is a worse first run, not
+/// a broken one, and nothing downstream depends on it.
+fn hint(window: &WebviewWindow) {
+    if HINTED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let _ = window
+        .app_handle()
+        .notification()
+        .builder()
+        .title("MyTimeOff is still listening")
+        .body("It is in the notification area. Click it to open the reader again.")
+        .show();
+}
 
 /// How long to wait before trying the stream again.
 ///
