@@ -91,7 +91,7 @@ impl Provider {
         }
     }
 
-    /// The name a person would type at the command line: `mytimeoff-daemon key gemini`.
+    /// The name a person would type at the command line: `mytimeoff key gemini`.
     pub fn from_word(word: &str) -> Option<Self> {
         match word.trim().to_ascii_lowercase().as_str() {
             "claude" | "anthropic" => Some(Provider::Anthropic),
@@ -257,7 +257,7 @@ pub fn source_for(config: &Config) -> Result<(Arc<dyn QuestionSource>, String), 
             offline,
             format!(
                 "offline (no {provider} API key stored)
-                         store one with:  mytimeoff-daemon key {}",
+                         store one with:  mytimeoff key {}",
                 provider.word(),
             ),
         ));

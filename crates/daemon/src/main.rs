@@ -19,6 +19,13 @@ async fn main() {
 }
 
 async fn run() -> io::Result<()> {
+    // Before the dispatch, because `check` and `autostart` read the config too, and a
+    // command that silently read a *different* config than the one it moved would be a
+    // strange thing to debug.
+    if let Some(note) = paths::migrate_legacy_state() {
+        println!("{note}");
+    }
+
     let word = std::env::args().nth(2);
     match std::env::args().nth(1).as_deref() {
         // No word at all is the daemon itself, which is the only thing this program does
@@ -100,7 +107,7 @@ async fn check() -> io::Result<()> {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!(
-                "no {} API key. Store one with:  mytimeoff-daemon key {}",
+                "no {} API key. Store one with:  mytimeoff key {}",
                 provider,
                 provider.word(),
             ),
@@ -172,7 +179,7 @@ fn store_key(word: Option<&str>) -> io::Result<()> {
                 Provider::ALL.iter().map(|p| p.word()).collect::<Vec<_>>().join(" or ");
             io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("no provider called \"{word}\". Try: mytimeoff-daemon key {known}"),
+                format!("no provider called \"{word}\". Try: mytimeoff key {known}"),
             )
         })?,
         None => {
@@ -235,7 +242,7 @@ fn autostart_command(word: Option<&str>) -> io::Result<()> {
             Ok(())
         }
         Some(other) => Err(invalid(format!(
-            "no autostart setting called \"{other}\". Try: mytimeoff-daemon autostart on, off or status"
+            "no autostart setting called \"{other}\". Try: mytimeoff autostart on, off or status"
         ))),
     }
 }
@@ -245,7 +252,7 @@ fn report_autostart() -> io::Result<()> {
     match (&item.command, item.enabled) {
         (None, _) => {
             println!("MyTimeOff does not start when you sign in.");
-            println!("Turn it on with:  mytimeoff-daemon autostart on");
+            println!("Turn it on with:  mytimeoff autostart on");
         }
         // Registered, and then switched off in Task Manager. Saying "on" here would be a
         // lie about the next reboot, and saying "off" would hide an entry that is still
@@ -270,21 +277,58 @@ fn report_autostart() -> io::Result<()> {
 /// there this refuses rather than registering the daemon instead: an autostart that opens
 /// a console window and no reader is not what anyone asked for, and silently doing the
 /// wrong one of two things is worse than doing neither.
+///
+/// Two names, because the window has two. Installed it is `MyTimeOff.exe`, which is what a
+/// person sees; built from source it is `mytimeoff-shell.exe`, which is what Cargo calls
+/// the crate. Looking for only one of them breaks autostart either for everybody who
+/// installed the app or for everybody working on it.
 fn reader_exe() -> io::Result<std::path::PathBuf> {
     let exe = std::env::current_exe()?;
-    let name = if cfg!(windows) { "mytimeoff-shell.exe" } else { "mytimeoff-shell" };
-    let reader = exe.with_file_name(name);
-    if !reader.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "no reader window beside this program, so there is nothing useful to start.\n\
-                 Looked for: {}",
-                reader.display(),
-            ),
-        ));
+    let suffix = if cfg!(windows) { ".exe" } else { "" };
+    let names = [format!("MyTimeOff{suffix}"), format!("mytimeoff-shell{suffix}")];
+
+    // Two places, because there are two layouts. Installed, this program sits in a bin
+    // subdirectory and the window is one level up: they cannot share a directory, since
+    // Windows treats MyTimeOff.exe and mytimeoff.exe as one file. In a cargo target
+    // directory the two do sit side by side.
+    let here = exe.parent().map_or_else(|| exe.clone(), |dir| dir.to_path_buf());
+    let mut dirs = vec![here.clone()];
+    if let Some(above) = here.parent() {
+        dirs.push(above.to_path_buf());
     }
-    Ok(reader)
+
+    for dir in &dirs {
+        for name in &names {
+            let reader = dir.join(name);
+            if reader.is_file() && !is_this_program(&reader, &exe) {
+                return Ok(reader);
+            }
+        }
+    }
+
+    let looked: Vec<String> = dirs.iter().map(|dir| dir.display().to_string()).collect();
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "no reader window near this program, so there is nothing useful to start.\n\
+             Looked in {} for: {}",
+            looked.join(" and "),
+            names.join(", "),
+        ),
+    ))
+}
+
+/// Is `candidate` the very program that is running?
+///
+/// Windows matches filenames without regard to case, so looking for `MyTimeOff.exe` in
+/// the bin directory finds `mytimeoff.exe` - this program - and would offer the command
+/// line to the user as their reading window. Resolving both paths is what tells them
+/// apart; comparing the names as written does not.
+fn is_this_program(candidate: &std::path::Path, exe: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(candidate), std::fs::canonicalize(exe)) {
+        (Ok(one), Ok(other)) => one == other,
+        _ => false,
+    }
 }
 
 /// "You asked for something impossible", as an `io::Error`.
@@ -332,4 +376,70 @@ fn busy(error: io::Error, config_path: &std::path::Path) -> io::Error {
             config_path.display(),
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch directory that removes itself, so no test goes looking at a real install.
+    struct Temp(std::path::PathBuf);
+
+    impl Temp {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "mytimeoff-exe-{tag}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("temp dir");
+            Self(dir)
+        }
+
+        fn file(&self, name: &str) -> std::path::PathBuf {
+            let path = self.0.join(name);
+            std::fs::write(&path, b"not really a program").expect("write");
+            path
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The bug this guards against: the command line found itself, called it the reading
+    /// window, and wrote that into the startup list. `bin\MyTimeOff.exe` is a name that
+    /// answers on Windows even though no file was ever written under it.
+    #[test]
+    #[cfg(windows)]
+    fn a_name_in_the_other_case_is_the_same_program() {
+        let temp = Temp::new("case");
+        let real = temp.file("mytimeoff.exe");
+        let asked_for = temp.0.join("MyTimeOff.exe");
+
+        assert!(asked_for.is_file(), "Windows should answer to either spelling");
+        assert!(is_this_program(&asked_for, &real));
+    }
+
+    #[test]
+    fn two_programs_side_by_side_stay_apart() {
+        let temp = Temp::new("apart");
+        let one = temp.file("mytimeoff.exe");
+        let other = temp.file("mytimeoff-shell.exe");
+
+        assert!(!is_this_program(&other, &one));
+    }
+
+    /// Nothing is there to be the same as, so nothing is claimed. The caller has already
+    /// checked `is_file`; this only decides between two names that both exist.
+    #[test]
+    fn a_name_with_no_file_behind_it_is_nobody() {
+        let temp = Temp::new("absent");
+        let real = temp.file("mytimeoff.exe");
+
+        assert!(!is_this_program(&temp.0.join("MyTimeOff.exe.missing"), &real));
+    }
 }

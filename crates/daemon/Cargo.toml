@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 description = "Loopback hook endpoint and turn state driver for MyTimeOff"
 
+# The crate keeps the name that says what it is; the binary takes the name a person types.
+# "daemon" is our word for the thing that listens, and nobody installing this tool has any
+# reason to learn it - they have an app and a command, and this is the command.
+[[bin]]
+name = "mytimeoff"
+path = "src/main.rs"
+
 [dependencies]
 axum = "0.8.9"
 mytimeoff-core = { path = "../core" }

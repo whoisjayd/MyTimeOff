@@ -33,7 +33,7 @@
 //!   across models: see [`THINKING`]. It is the shape of failure to expect from this
 //!   file. A name or a value that goes stale is a 400 at every gate, and the fallback
 //!   turns that into stub questions rather than an error, so nothing is visibly wrong.
-//!   `mytimeoff-daemon check` is what makes it visible. Worth running once after storing
+//!   `mytimeoff check` is what makes it visible. Worth running once after storing
 //!   a key, and again after changing the model.
 
 use mytimeoff_core::Question;
@@ -57,7 +57,7 @@ pub const PREFIX: &str = "gemini-";
 /// supported thinking level for this model. Allowed values are: high, low, medium." A
 /// value only some models accept is the worst kind of constant to hold here, because the
 /// fallback turns the refusal into silence: every gate quietly gets stub questions, and
-/// the only way to see it is `mytimeoff-daemon check`. Which is how this was found.
+/// the only way to see it is `mytimeoff check`. Which is how this was found.
 const THINKING: &str = "low";
 
 pub struct Gemini {

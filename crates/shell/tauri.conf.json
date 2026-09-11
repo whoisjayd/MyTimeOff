@@ -1,12 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MyTimeOff",
+  "mainBinaryName": "MyTimeOff",
   "version": "0.1.0",
   "identifier": "com.mytimeoff.desktop",
   "build": {
     "frontendDist": "../../apps/reader/dist",
     "beforeDevCommand": "pnpm --filter @mytimeoff/reader build",
-    "beforeBuildCommand": "pnpm --filter @mytimeoff/reader build"
+    "beforeBuildCommand": "pnpm --filter @mytimeoff/reader build && pnpm -w run bundle:cli"
   },
   "app": {
     "withGlobalTauri": false,
@@ -18,6 +19,18 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "publisher": "MyTimeOff",
+    "shortDescription": "Read a book in the time your coding agent spends thinking.",
+    "longDescription": "MyTimeOff watches for the long turns your AI coding agent takes, puts a book on the screen while it works, and asks what you read before it lets you back.",
+    "category": "Productivity",
+    "license": "MIT",
+    "licenseFile": "../../LICENSE",
+    "resources": { "binaries/mytimeoff.exe": "bin/mytimeoff.exe" },
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer-hooks.nsh"
+      }
+    }
   }
 }
