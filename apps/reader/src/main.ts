@@ -231,8 +231,13 @@ connectCommands({
     // Only the transition matters. A replayed start_quiz on reconnect must not throw away
     // a half-filled answer sheet, and `gate()` would return the same quiz in any case.
     const opened = next.quiz && !surfaceState.quiz;
+    // The same reasoning for the indicator: it *changing* is news, it being up is not, and
+    // a reconnect would otherwise announce a turn that ended an hour ago.
+    const raised =
+      next.indicator !== null && next.indicator !== surfaceState.indicator ? next.indicator : null;
     surfaceState = next;
     surface.render(surfaceState);
+    if (raised) surface.alert(raised);
     if (opened) void openGate();
   },
   onConnection: (connected) => surface.connection(connected),

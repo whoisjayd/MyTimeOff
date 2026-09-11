@@ -60,15 +60,49 @@ body {
  */
 body[data-reading="true"] { --line: #b8892f; }
 body[data-reading="true"] #status { border-top-color: var(--line); }
-#indicator {
+/*
+ * The corner is pinned, not the indicator, so the toast below it grows the stack upwards
+ * instead of pushing itself off the bottom of the screen.
+ */
+#corner {
   position: fixed; inset: auto 16px 16px auto; z-index: 10;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+  pointer-events: none;
+}
+#corner > * { pointer-events: auto; }
+#indicator {
   display: flex; align-items: center; gap: 12px;
   padding: 10px 12px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--bg);
   box-shadow: 0 6px 24px #0000002e;
   font: 13px/1.3 ui-sans-serif, system-ui, sans-serif;
 }
+/*
+ * Both kinds are worth a colour. Green for a turn that ended, red for one that stalled:
+ * the border alone is a quiet difference, which is why the toast below exists as well.
+ */
+#indicator[data-kind="done"] { border-color: #4f7a3f; }
 #indicator[data-kind="needs_input"] { border-color: #c2453d; }
+/*
+ * The announcement, as opposed to the standing fact above it. Filled rather than outlined,
+ * because this has one job: to be seen by someone whose eyes are on a book.
+ */
+#toast {
+  max-width: 34ch; padding: 8px 12px; border-radius: 8px;
+  border: 1px solid #4f7a3f; background: #4f7a3f; color: #f7f5f0;
+  box-shadow: 0 6px 24px #00000038;
+  font: 12px/1.35 ui-sans-serif, system-ui, sans-serif;
+  animation: toast-in 220ms ease-out;
+}
+#toast[data-kind="needs_input"] { border-color: #c2453d; background: #c2453d; }
+/* It slides out from under the indicator, so the eye is led from one to the other. */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #toast { animation: none; }
+}
 #indicator button, #quiz button {
   background: none; border: 1px solid var(--line); color: var(--fg);
   border-radius: 6px; padding: 5px 10px; cursor: pointer;

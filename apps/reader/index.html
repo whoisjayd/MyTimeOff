@@ -22,10 +22,22 @@
           <button id="next" type="button" aria-label="Next page">›</button>
         </footer>
       </section>
-      <aside id="indicator" hidden>
-        <span id="indicator-text"></span>
-        <button id="back" type="button">Back to the agent</button>
-      </aside>
+      <!--
+        The indicator and the thing that announces it, stacked bottom-right. The corner is
+        pinned rather than the indicator, so the toast can sit below without leaving the
+        screen: what grows is the top of the stack.
+      -->
+      <div id="corner">
+        <aside id="indicator" hidden>
+          <span id="indicator-text"></span>
+          <button id="back" type="button">Back to the agent</button>
+        </aside>
+        <!--
+          `output` rather than `div`: it carries role="status" on its own, so a screen
+          reader announces this the moment it appears, which is the whole point of it.
+        -->
+        <output id="toast" hidden></output>
+      </div>
       <section id="quiz" hidden>
         <h2>Before you go</h2>
         <p id="quiz-note"></p>
