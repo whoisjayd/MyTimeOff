@@ -24,11 +24,17 @@
 //!   a key being read and rejected rather than a request being misunderstood.
 //! - Every field name below is from the CreateInteraction reference, which is where the
 //!   `system_instruction` question above was finally answered: it takes a plain string.
-//!   The live API cannot confirm them, because it validates the key before the body - a
-//!   request of pure nonsense with a bad key returns the same `API_KEY_INVALID` as a
-//!   correct one. So if a name here goes stale, the symptom is a 400 at every gate and
-//!   the offline stub quietly taking over, and `mytimeoff-daemon check` is what turns
-//!   that from invisible into a printed message. Worth running once after storing a key.
+//!   They have since been confirmed against the live API with a real key: this request
+//!   body, unchanged, comes back with usable questions. That confirmation was worth
+//!   waiting for, because with an *invalid* key nothing here can be checked at all - the
+//!   key is validated before the body, so a request of pure nonsense returns the same
+//!   `API_KEY_INVALID` as a correct one.
+//! - What that first real call found was `thinking_level`, which is not one vocabulary
+//!   across models: see [`THINKING`]. It is the shape of failure to expect from this
+//!   file. A name or a value that goes stale is a 400 at every gate, and the fallback
+//!   turns that into stub questions rather than an error, so nothing is visibly wrong.
+//!   `mytimeoff-daemon check` is what makes it visible. Worth running once after storing
+//!   a key, and again after changing the model.
 
 use mytimeoff_core::Question;
 use serde_json::{Value, json};
@@ -44,7 +50,15 @@ pub const PREFIX: &str = "gemini-";
 /// This runs while the reader is standing at a closed gate. Comprehension questions about
 /// a page of prose are not the kind of problem that gets better with deliberation, and
 /// every second of it is a second of someone waiting.
-const THINKING: &str = "minimal";
+///
+/// "low" rather than "minimal", which is the lowest level this API accepts across models
+/// rather than the lowest one it names. `gemini-3.5-flash` takes "minimal"; ask
+/// `gemini-3.8-flash` for it and the whole request is a 400 - "'minimal' is not a
+/// supported thinking level for this model. Allowed values are: high, low, medium." A
+/// value only some models accept is the worst kind of constant to hold here, because the
+/// fallback turns the refusal into silence: every gate quietly gets stub questions, and
+/// the only way to see it is `mytimeoff-daemon check`. Which is how this was found.
+const THINKING: &str = "low";
 
 pub struct Gemini {
     key: String,
@@ -225,6 +239,18 @@ mod tests {
         assert_eq!(body["response_format"]["mime_type"], "application/json");
         assert_eq!(body["response_format"]["schema"], schema());
         assert_eq!(body["generation_config"]["thinking_level"], THINKING);
+    }
+
+    #[test]
+    fn the_thinking_level_is_one_that_every_model_accepts() {
+        // "minimal" is named by the API and refused by some models, and the refusal is a
+        // 400 on the whole request rather than a fallback to a level that works. There is
+        // no network here to catch that, so this is the next best thing: the three levels
+        // below are the ones a model has never refused.
+        assert!(
+            matches!(THINKING, "low" | "medium" | "high"),
+            "{THINKING:?} is not accepted by every model; a gate would silently get stub questions",
+        );
     }
 
     #[test]
