@@ -7,10 +7,8 @@
 pub mod agents;
 pub mod autostart;
 pub mod paths;
-pub mod quiz;
 pub mod secret;
 pub mod settings;
-pub mod store;
 pub mod text;
 pub mod token;
 
@@ -35,8 +33,8 @@ use mytimeoff_core::{
 use serde::{Deserialize, Serialize};
 
 use crate::agents::Agent;
-use crate::quiz::QuestionSource;
-use crate::store::Store;
+use mytimeoff_quiz::QuestionSource;
+use mytimeoff_store::Store;
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, broadcast};
 use tokio_stream::wrappers::BroadcastStream;
@@ -642,10 +640,10 @@ fn wall_clock_ms() -> i64 {
 ///
 /// A page view for an unregistered book is the caller's mistake and recoverable by
 /// registering it; anything else is ours, and saying 500 is the honest answer.
-fn store_error(error: rusqlite::Error) -> Response {
+fn store_error(error: mytimeoff_store::rusqlite::Error) -> Response {
     let violated_a_constraint = matches!(
         error.sqlite_error_code(),
-        Some(rusqlite::ErrorCode::ConstraintViolation)
+        Some(mytimeoff_store::rusqlite::ErrorCode::ConstraintViolation)
     );
     if violated_a_constraint {
         (StatusCode::CONFLICT, "unknown book: register it with POST /book first").into_response()

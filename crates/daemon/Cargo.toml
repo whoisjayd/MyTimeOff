@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Loopback hook endpoint and turn state driver for MyTimeOff"
 
+[lints]
+workspace = true
+
 # The crate keeps the name that says what it is; the binary takes the name a person types.
 # "daemon" is our word for the thing that listens, and nobody installing this tool has any
 # reason to learn it - they have an app and a command, and this is the command.
@@ -15,9 +18,10 @@ path = "src/main.rs"
 [dependencies]
 axum = "0.8.9"
 mytimeoff-core = { path = "../core" }
+mytimeoff-quiz = { path = "../quiz" }
+mytimeoff-store = { path = "../store" }
 rand = "0.10.2"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "http2"] }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 # preserve_order, because `mytimeoff hooks install` writes back a file somebody else
 # wrote. Without it every key in their ~/.claude/settings.json comes back alphabetised,

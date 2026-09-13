@@ -20,9 +20,10 @@
 
 use std::io;
 
-use mytimeoff_daemon::store::Store;
-use mytimeoff_daemon::{Daemon, bind, paths, quiz, serve};
 use mytimeoff_core::Config;
+use mytimeoff_daemon::{Daemon, bind, paths, secret, serve};
+use mytimeoff_quiz as quiz;
+use mytimeoff_store::Store;
 
 /// What happened when this process tried to be the daemon.
 pub enum Host {
@@ -52,7 +53,7 @@ pub async fn ensure(config: &Config, token: &str) -> io::Result<Host> {
     };
 
     let store = Store::open(&paths::database()?)?;
-    let (questions, note) = quiz::source_for(config).map_err(io::Error::other)?;
+    let (questions, note) = quiz::source_for(config, &secret::find).map_err(io::Error::other)?;
     let daemon = Daemon::new(config.clone(), store, token.to_string(), questions);
 
     tauri::async_runtime::spawn(async move {

@@ -1,10 +1,10 @@
 use std::io::{self, Read};
 
 use mytimeoff_core::Locator;
-use mytimeoff_daemon::quiz::{self, Page, Provider};
-use mytimeoff_daemon::store::Store;
 use mytimeoff_daemon::agents::{self, Agent};
 use mytimeoff_daemon::{Daemon, autostart, bind, paths, secret, serve, settings, token};
+use mytimeoff_quiz::{self as quiz, Page, Provider};
+use mytimeoff_store::Store;
 
 #[tokio::main]
 async fn main() {
@@ -72,7 +72,7 @@ async fn run() -> io::Result<()> {
     println!("config: {}", config_path.display());
     println!("token:  {}", token_path.display());
     println!("books:  {}", database_path.display());
-    let (questions, note) = quiz::source_for(&config).map_err(invalid)?;
+    let (questions, note) = quiz::source_for(&config, &secret::find).map_err(invalid)?;
     println!("quiz:   {note}");
     report_wiring(&secret);
     let daemon = Daemon::new(config, store, secret, questions);
@@ -99,7 +99,7 @@ async fn check() -> io::Result<()> {
     let Some(provider) = Provider::for_model(&config.model) else {
         return Err(invalid(quiz::unknown_model(&config.model)));
     };
-    let Some(key) = provider.key() else {
+    let Some(key) = provider.key(&secret::find) else {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!(

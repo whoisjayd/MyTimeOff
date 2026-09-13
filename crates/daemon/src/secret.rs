@@ -17,12 +17,6 @@
 use std::env;
 use std::io;
 
-/// The credentials' names in the store. Prefixed, because the store is machine-wide and a
-/// bare "anthropic" would be a landmine for anything else the user installs. One name per
-/// provider, so a machine can hold both and storing one never destroys the other.
-pub const ANTHROPIC_KEY: &str = "MyTimeOff/anthropic-api-key";
-pub const GEMINI_KEY: &str = "MyTimeOff/gemini-api-key";
-
 /// A key, from the credential store or the environment, or None if there is neither.
 ///
 /// A missing key is not an error. It is a working install that makes its own questions

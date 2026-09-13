@@ -2368,15 +2368,25 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "mytimeoff-core",
+ "mytimeoff-quiz",
+ "mytimeoff-store",
  "rand 0.10.2",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
  "tokio",
  "tokio-stream",
  "toml_edit 0.25.15+spec-1.1.0",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mytimeoff-quiz"
+version = "0.1.0"
+dependencies = [
+ "mytimeoff-core",
+ "reqwest",
+ "serde_json",
 ]
 
 [[package]]
@@ -2387,12 +2397,23 @@ dependencies = [
  "futures-util",
  "mytimeoff-core",
  "mytimeoff-daemon",
+ "mytimeoff-quiz",
+ "mytimeoff-store",
  "reqwest",
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
  "tokio",
+]
+
+[[package]]
+name = "mytimeoff-store"
+version = "0.1.0"
+dependencies = [
+ "mytimeoff-core",
+ "mytimeoff-quiz",
+ "rusqlite",
 ]
 
 [[package]]

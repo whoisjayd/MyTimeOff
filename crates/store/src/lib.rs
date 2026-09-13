@@ -9,9 +9,13 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use mytimeoff_core::{Book, BookFormat, Locator, PageView, Resume};
+use mytimeoff_quiz::Page;
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::quiz::Page;
+/// Re-exported so callers reporting a store error (the daemon's HTTP layer, mapping a
+/// constraint violation to 409) never need `rusqlite` as a dependency of their own just to
+/// name its `Error`/`ErrorCode` types.
+pub use rusqlite;
 
 pub struct Store {
     /// SQLite takes one writer at a time regardless, and the write rate here is one row

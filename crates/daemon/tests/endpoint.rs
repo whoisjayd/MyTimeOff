@@ -9,10 +9,10 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use mytimeoff_core::{Config, Question, ReaderMode};
-use mytimeoff_daemon::quiz::stub::Stub;
-use mytimeoff_daemon::quiz::{Page, QuestionSource, Questions};
-use mytimeoff_daemon::store::Store;
 use mytimeoff_daemon::{Daemon, bind, serve};
+use mytimeoff_quiz::stub::Stub;
+use mytimeoff_quiz::{Page, QuestionSource, Questions};
+use mytimeoff_store::Store;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;

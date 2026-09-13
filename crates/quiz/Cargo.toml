@@ -1,0 +1,14 @@
+[package]
+name = "mytimeoff-quiz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Turns read pages into quiz questions: an offline stub plus Claude/Gemini providers"
+
+[lints]
+workspace = true
+
+[dependencies]
+mytimeoff-core = { path = "../core" }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "http2"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }

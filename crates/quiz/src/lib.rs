@@ -16,9 +16,22 @@ use std::sync::Arc;
 
 use mytimeoff_core::{Config, Locator, Question};
 
-use crate::secret;
-
 use self::stub::Stub;
+
+/// The credentials' names in the store. Prefixed, because the store is machine-wide and a
+/// bare "anthropic" would be a landmine for anything else the user installs. One name per
+/// provider, so a machine can hold both and storing one never destroys the other.
+///
+/// Named here rather than in the crate that reads the credential store: this crate is the
+/// one that decides which provider owns which name, and the reader only knows how to look
+/// a name up.
+const ANTHROPIC_KEY: &str = "MyTimeOff/anthropic-api-key";
+const GEMINI_KEY: &str = "MyTimeOff/gemini-api-key";
+
+/// Looks a credential up: the store first, the environment as fallback, `None` if neither
+/// has it. Injected rather than called directly, so this crate never has to know whether
+/// the store behind it is Windows Credential Manager, Keychain, or a test double.
+pub type KeyFinder<'a> = &'a dyn Fn(&str, &[&str]) -> Option<String>;
 
 /// One page as a question source sees it: where it was, and what it said.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,8 +142,8 @@ impl Provider {
     /// both and overwriting one with the other would be a puzzling way to lose a key.
     pub fn credential(self) -> &'static str {
         match self {
-            Provider::Anthropic => secret::ANTHROPIC_KEY,
-            Provider::Google => secret::GEMINI_KEY,
+            Provider::Anthropic => ANTHROPIC_KEY,
+            Provider::Google => GEMINI_KEY,
         }
     }
 
@@ -146,8 +159,8 @@ impl Provider {
     }
 
     /// The key, from the credential store or the environment, or None if there is neither.
-    pub fn key(self) -> Option<String> {
-        secret::find(self.credential(), self.env())
+    pub fn key(self, find: KeyFinder) -> Option<String> {
+        find(self.credential(), self.env())
     }
 
     pub fn source(self, key: String, model: String) -> Result<Arc<dyn QuestionSource>, SourceError> {
@@ -219,7 +232,7 @@ impl QuestionSource for Fallback {
 /// unrelated to security - which `DefaultHasher`, seeded per process, is not. Question ids
 /// are built from it, and an id that changed between two fetches of the same quiz would
 /// mark a correct answer wrong.
-pub(super) fn hash(text: &str) -> u32 {
+pub(crate) fn hash(text: &str) -> u32 {
     let mut hash: u32 = 0x811c_9dc5;
     for byte in text.as_bytes() {
         hash ^= u32::from(*byte);
@@ -241,7 +254,10 @@ pub(super) fn hash(text: &str) -> u32 {
 /// The only hard error is a model name that belongs to nobody. Every other outcome is a
 /// working install, so a typo would otherwise mean quietly using the offline questions
 /// forever while the config looks exactly right.
-pub fn source_for(config: &Config) -> Result<(Arc<dyn QuestionSource>, String), String> {
+pub fn source_for(
+    config: &Config,
+    find: KeyFinder,
+) -> Result<(Arc<dyn QuestionSource>, String), String> {
     let offline: Arc<dyn QuestionSource> = Arc::new(Stub);
     if config.model.is_empty() {
         let note = "offline (model is empty; nothing you read leaves this machine)";
@@ -252,7 +268,7 @@ pub fn source_for(config: &Config) -> Result<(Arc<dyn QuestionSource>, String), 
         return Err(unknown_model(&config.model));
     };
 
-    let Some(key) = provider.key() else {
+    let Some(key) = provider.key(find) else {
         return Ok((
             offline,
             format!(
