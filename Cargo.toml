@@ -6,3 +6,7 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+
+[workspace.lints.clippy]
+redundant_clone = "warn"
+large_enum_variant = "warn"
