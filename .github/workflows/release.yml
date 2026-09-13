@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tauri build
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: target/release/bundle/nsis/*.exe

@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      # No dedicated toolchain action: GitHub's runners ship rustup with auto-install
+      # enabled, so this alone installs the exact channel/components rust-toolchain.toml
+      # pins - dtolnay/rust-toolchain has no input that reads that file.
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # mytimeoff-shell is a workspace member whose build.rs checks its declared
+      # resources at compile time, so `cargo test --workspace` needs the reader built
+      # and the CLI staged first, or it fails before a single Rust test runs.
+      - run: pnpm --filter @mytimeoff/reader build
+      - run: node scripts/bundle-cli.mjs --debug
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo fmt --all -- --check
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r test
+      - run: pnpm --filter @mytimeoff/reader build
+
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: choco install nsis -y
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/bundle-cli.mjs
+      - run: pnpm run test:installer-hooks
