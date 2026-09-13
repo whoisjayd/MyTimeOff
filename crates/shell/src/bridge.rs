@@ -79,10 +79,7 @@ pub async fn start<R: Runtime>(
         http,
     });
 
-    let app = Router::new()
-        .route("/daemon/{*path}", any(proxy))
-        .fallback(asset)
-        .with_state(bridge);
+    let app = Router::new().route("/daemon/{*path}", any(proxy)).fallback(asset).with_state(bridge);
 
     let listener = listen().await?;
     let addr = listener.local_addr()?;
@@ -144,15 +141,15 @@ async fn proxy<R: Runtime>(
                     response = response.header(name, value);
                 }
             }
-            response
-                .body(Body::from_stream(answer.bytes_stream()))
-                .unwrap_or_else(|error| {
-                    (StatusCode::BAD_GATEWAY, error.to_string()).into_response()
-                })
+            response.body(Body::from_stream(answer.bytes_stream())).unwrap_or_else(|error| {
+                (StatusCode::BAD_GATEWAY, error.to_string()).into_response()
+            })
         }
         // The daemon not being up is the normal case on a cold start, not an exception.
         // Say so in a way the reader's own error handling can show.
-        Err(error) => (StatusCode::BAD_GATEWAY, format!("daemon unreachable: {error}")).into_response(),
+        Err(error) => {
+            (StatusCode::BAD_GATEWAY, format!("daemon unreachable: {error}")).into_response()
+        }
     }
 }
 
@@ -222,7 +219,10 @@ mod tests {
 
     #[test]
     fn a_file_that_was_built_is_served_as_itself() {
-        assert_eq!(resolve(&built(), "/assets/index-Tt7RaoDv.js").as_deref(), Some("/assets/index-Tt7RaoDv.js"));
+        assert_eq!(
+            resolve(&built(), "/assets/index-Tt7RaoDv.js").as_deref(),
+            Some("/assets/index-Tt7RaoDv.js")
+        );
         assert_eq!(resolve(&built(), "/index.html").as_deref(), Some("/index.html"));
     }
 

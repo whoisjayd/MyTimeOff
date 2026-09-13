@@ -41,8 +41,7 @@ pub fn install(app: &AppHandle) -> io::Result<()> {
     let quit = MenuItem::with_id(app, QUIT, "Quit MyTimeOff", true, None::<&str>)
         .map_err(io::Error::other)?;
     let separator = PredefinedMenuItem::separator(app).map_err(io::Error::other)?;
-    let menu =
-        Menu::with_items(app, &[&open, &separator, &quit]).map_err(io::Error::other)?;
+    let menu = Menu::with_items(app, &[&open, &separator, &quit]).map_err(io::Error::other)?;
 
     // The window's own icon, not a second one to keep in step with it. Tauri embedded it
     // from `bundle.icon`, so this is the image already on the taskbar and in the title

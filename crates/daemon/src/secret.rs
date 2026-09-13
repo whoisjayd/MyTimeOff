@@ -111,8 +111,11 @@ mod platform {
         let secret = unsafe {
             let blob = (*credential).CredentialBlob;
             let size = (*credential).CredentialBlobSize as usize;
-            let bytes =
-                if blob.is_null() || size == 0 { &[][..] } else { slice::from_raw_parts(blob, size) };
+            let bytes = if blob.is_null() || size == 0 {
+                &[][..]
+            } else {
+                slice::from_raw_parts(blob, size)
+            };
             let decoded = decode(bytes);
             CredFree(credential.cast());
             decoded

@@ -49,9 +49,11 @@ async fn run() -> io::Result<()> {
         // `mytimeoff --help` opened a server, and that a misspelt subcommand
         // opened a second one on a port that was already spoken for.
         Some(other) => {
-            return Err(invalid(format!("no command called \"{other}\".
+            return Err(invalid(format!(
+                "no command called \"{other}\".
 
-{USAGE}")));
+{USAGE}"
+            )));
         }
     }
 
@@ -102,19 +104,14 @@ async fn check() -> io::Result<()> {
     let Some(key) = provider.key(&secret::find) else {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!(
-                "no {} API key. Store one with:  mytimeoff key {}",
-                provider,
-                provider.word(),
-            ),
+            format!("no {} API key. Store one with:  mytimeoff key {}", provider, provider.word(),),
         ));
     };
 
     println!("Asking {} ({provider}) for questions about two sample pages…", config.model);
     let source = provider.source(key, config.model.clone()).map_err(io::Error::other)?;
     let pages = samples();
-    let questions =
-        source.questions(&pages, pages.len()).await.map_err(io::Error::other)?;
+    let questions = source.questions(&pages, pages.len()).await.map_err(io::Error::other)?;
 
     println!();
     for question in &questions {
@@ -175,8 +172,7 @@ fn samples() -> Vec<Page> {
 fn store_key(word: Option<&str>) -> io::Result<()> {
     let provider = match word {
         Some(word) => Provider::from_word(word).ok_or_else(|| {
-            let known =
-                Provider::ALL.iter().map(|p| p.word()).collect::<Vec<_>>().join(" or ");
+            let known = Provider::ALL.iter().map(|p| p.word()).collect::<Vec<_>>().join(" or ");
             io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("no provider called \"{word}\". Try: mytimeoff key {known}"),
@@ -353,7 +349,10 @@ fn report_agent(agent: Agent, secret: Option<&str>) -> io::Result<()> {
     if secret.is_some() && !status.complete(agent) {
         println!();
         println!("These are not wired the way this machine would wire them now, so deliveries");
-        println!("are being turned away. Put it right with:  mytimeoff hooks install {}", agent.key());
+        println!(
+            "are being turned away. Put it right with:  mytimeoff hooks install {}",
+            agent.key()
+        );
     }
     Ok(())
 }
@@ -436,7 +435,10 @@ fn report_wiring(token: &str) {
             // other.
             Ok(status) if !status.present && status.wired.is_empty() => {}
             Ok(status) if status.wired.is_empty() => {
-                println!("{label}:  not wired - open MyTimeOff, or:  mytimeoff hooks install {}", agent.key());
+                println!(
+                    "{label}:  not wired - open MyTimeOff, or:  mytimeoff hooks install {}",
+                    agent.key()
+                );
             }
             Ok(_) => println!("{label}:  wired, but not correctly - run:  mytimeoff hooks status"),
             // Not fatal. The daemon works; it is the report about it that did not.

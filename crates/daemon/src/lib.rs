@@ -275,13 +275,8 @@ async fn state(State(daemon): State<Arc<Daemon>>) -> Json<StateReport> {
     let session = machine.bound_session().map(|s| s.0.clone());
     drop(machine);
 
-    let issued = daemon
-        .issued
-        .lock()
-        .expect("issued lock")
-        .iter()
-        .map(|c| describe_command(*c))
-        .collect();
+    let issued =
+        daemon.issued.lock().expect("issued lock").iter().map(|c| describe_command(*c)).collect();
 
     let received = daemon.log.lock().expect("log lock").clone();
 

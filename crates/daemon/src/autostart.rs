@@ -115,7 +115,8 @@ mod platform {
     /// Task Manager's record of which of those the user has switched off. A separate key,
     /// because it is a separate decision: one is what was installed, the other is what the
     /// person wants today.
-    const APPROVED: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    const APPROVED: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
     pub fn read(name: &str) -> io::Result<LoginItem> {
         let Some(bytes) = value(RUN, name)? else {
@@ -178,7 +179,14 @@ mod platform {
         // SAFETY: a null buffer with a live size out-pointer is the documented way to ask
         // how big the value is.
         let code = unsafe {
-            RegQueryValueExW(key, name.as_ptr(), ptr::null(), ptr::null_mut(), ptr::null_mut(), &mut size)
+            RegQueryValueExW(
+                key,
+                name.as_ptr(),
+                ptr::null(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut size,
+            )
         };
         if code == ERROR_FILE_NOT_FOUND {
             close(key);
@@ -227,8 +235,7 @@ mod platform {
         let mut key: HKEY = ptr::null_mut();
         // SAFETY: `path` outlives the call and `key` is a valid out-pointer. On success
         // Windows hands back a handle that every path below closes.
-        let code =
-            unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, access, &mut key) };
+        let code = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, access, &mut key) };
         checked(code)?;
         Ok(key)
     }

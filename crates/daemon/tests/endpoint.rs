@@ -471,7 +471,10 @@ async fn a_wrong_answer_buys_one_retry_and_no_more() {
     assert!(report.contains(r#""state":"gate""#), "still owed: {report}");
 
     let (_, second) = post(addr, "/gate/answers", &answers).await;
-    assert!(second.contains(r#""reason":"exhausted""#), "the tool nags, it does not jail: {second}");
+    assert!(
+        second.contains(r#""reason":"exhausted""#),
+        "the tool nags, it does not jail: {second}"
+    );
     let report = state(addr).await;
     assert!(report.contains(r#""state":"idle""#), "{report}");
 }
@@ -657,10 +660,8 @@ async fn every_subscriber_sees_the_same_commands() {
 
 /// Wall-clock now: page views are dated against a calendar, not the machine's uptime.
 fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_millis() as i64
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock").as_millis()
+        as i64
 }
 
 fn book_body() -> String {

@@ -385,8 +385,7 @@ mod tests {
             let needed = mark.needed(total);
             assert!(needed <= total, "{needed} of {total} is more than was asked");
             for correct in 0..=total {
-                let score =
-                    Score { correct: correct as usize, total: total as usize, answered: 0 };
+                let score = Score { correct: correct as usize, total: total as usize, answered: 0 };
                 assert_eq!(
                     mark.met(&score),
                     correct >= needed,
@@ -558,10 +557,8 @@ mod tests {
 
     #[test]
     fn a_quiz_knows_which_pages_it_came_from() {
-        let repeated = Quiz {
-            questions: vec![question(1, 0), question(1, 1), question(2, 0)],
-            ..quiz()
-        };
+        let repeated =
+            Quiz { questions: vec![question(1, 0), question(1, 1), question(2, 0)], ..quiz() };
         assert_eq!(repeated.span().len(), 2, "two questions from one page is still one page");
     }
 }

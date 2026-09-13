@@ -82,15 +82,8 @@ fn ask_about(page: &Page, index: usize, all: &[Page]) -> Option<Question> {
 /// Preferring, not requiring: a single-page gate would otherwise have no question at all.
 /// Falling back to the same page keeps the wrong answers plausible - same book, same
 /// vocabulary - and they are still words that were not on the line being completed.
-fn distractors<'a>(
-    sentence: &str,
-    answer: &str,
-    index: usize,
-    all: &'a [Page],
-) -> Vec<&'a str> {
-    let usable = |word: &&str| {
-        !word.eq_ignore_ascii_case(answer) && !sentence.contains(*word)
-    };
+fn distractors<'a>(sentence: &str, answer: &str, index: usize, all: &'a [Page]) -> Vec<&'a str> {
+    let usable = |word: &&str| !word.eq_ignore_ascii_case(answer) && !sentence.contains(*word);
 
     let elsewhere = all
         .iter()
@@ -152,12 +145,21 @@ mod tests {
 
     fn library() -> Vec<Page> {
         vec![
-            page(1, "The cartographer folded the enormous chart against the wind. \
-                     Nothing else happened."),
-            page(2, "Her brother inherited the observatory and its broken telescope. \
-                     He never mentioned it."),
-            page(3, "Every harbour on that coastline remembered the shipwreck differently. \
-                     Some remembered nothing."),
+            page(
+                1,
+                "The cartographer folded the enormous chart against the wind. \
+                     Nothing else happened.",
+            ),
+            page(
+                2,
+                "Her brother inherited the observatory and its broken telescope. \
+                     He never mentioned it.",
+            ),
+            page(
+                3,
+                "Every harbour on that coastline remembered the shipwreck differently. \
+                     Some remembered nothing.",
+            ),
             page(4, "The librarian catalogued each pamphlet before the building was demolished."),
         ]
     }
@@ -176,10 +178,8 @@ mod tests {
     fn the_right_answer_was_really_on_the_page() {
         for question in build(&library(), 4) {
             let answer = &question.choices[question.answer_index];
-            let page = library()
-                .into_iter()
-                .find(|p| p.locator == question.source)
-                .expect("source page");
+            let page =
+                library().into_iter().find(|p| p.locator == question.source).expect("source page");
             assert!(page.text.contains(answer.as_str()), "{answer} was not on {}", page.text);
         }
     }

@@ -73,8 +73,7 @@ fn main() {
             }
 
             let assets = app.handle().asset_resolver();
-            let addr =
-                tauri::async_runtime::block_on(bridge::start(assets, config.port, secret))?;
+            let addr = tauri::async_runtime::block_on(bridge::start(assets, config.port, secret))?;
             println!("reader served on http://{addr} (daemon on 127.0.0.1:{})", config.port);
 
             // Sign-in is the one launch nobody asked for, and the only one that should

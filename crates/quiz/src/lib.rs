@@ -163,7 +163,11 @@ impl Provider {
         find(self.credential(), self.env())
     }
 
-    pub fn source(self, key: String, model: String) -> Result<Arc<dyn QuestionSource>, SourceError> {
+    pub fn source(
+        self,
+        key: String,
+        model: String,
+    ) -> Result<Arc<dyn QuestionSource>, SourceError> {
         Ok(match self {
             Provider::Anthropic => Arc::new(claude::Claude::new(key, model)?),
             Provider::Google => Arc::new(gemini::Gemini::new(key, model)?),

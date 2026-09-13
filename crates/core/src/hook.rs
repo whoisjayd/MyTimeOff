@@ -53,9 +53,7 @@ impl HookPayload {
             "Stop" | "SessionEnd" => Some(Event::AgentDone { session, at }),
             // Codex names the blocked-on-you case explicitly.
             "PermissionRequest" => Some(Event::AgentNeedsInput { session, at }),
-            "Notification" if self.blocks_on_user() => {
-                Some(Event::AgentNeedsInput { session, at })
-            }
+            "Notification" if self.blocks_on_user() => Some(Event::AgentNeedsInput { session, at }),
             _ => None,
         }
     }
@@ -220,9 +218,7 @@ mod tests {
     #[test]
     fn unrelated_events_are_ignored() {
         for name in ["PreToolUse", "PostToolUse", "PreCompact", "SessionStart"] {
-            let json = format!(
-                r#"{{"session_id":"abc123","hook_event_name":"{name}"}}"#
-            );
+            let json = format!(r#"{{"session_id":"abc123","hook_event_name":"{name}"}}"#);
             let payload = HookPayload::parse(&json).expect("valid payload");
             assert_eq!(payload.to_event(AT), None, "{name} must not move the screen");
         }

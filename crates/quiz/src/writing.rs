@@ -133,7 +133,8 @@ pub async fn ask(
         request.send().await.map_err(|error| SourceError::Unavailable(error.to_string()))?;
 
     let status = response.status();
-    let body = response.text().await.map_err(|error| SourceError::Unavailable(error.to_string()))?;
+    let body =
+        response.text().await.map_err(|error| SourceError::Unavailable(error.to_string()))?;
     if !status.is_success() {
         // The body carries the API's own explanation - a bad key, a rate limit, an
         // unknown model - and it is the only thing that makes this diagnosable. It never

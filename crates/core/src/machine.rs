@@ -80,13 +80,24 @@ pub enum Command {
 pub enum State {
     Idle,
     /// A turn is running but the screen has not been taken yet.
-    Armed { session: SessionId, since: Millis },
+    Armed {
+        session: SessionId,
+        since: Millis,
+    },
     /// The reader is up and the turn is still running.
-    Reading { session: SessionId, since: Millis },
+    Reading {
+        session: SessionId,
+        since: Millis,
+    },
     /// The turn ended; the indicator is showing and the reader is still up.
-    Ready { session: SessionId, alert: Alert },
+    Ready {
+        session: SessionId,
+        alert: Alert,
+    },
     /// The user asked to leave and the quiz is in progress.
-    Gate { session: SessionId },
+    Gate {
+        session: SessionId,
+    },
 }
 
 pub struct Machine {
@@ -183,22 +194,18 @@ impl Machine {
             }
 
             (State::Reading { session, .. }, Event::AgentNeedsInput { .. }) => {
-                self.state =
-                    State::Ready { session: session.clone(), alert: Alert::NeedsInput };
+                self.state = State::Ready { session: session.clone(), alert: Alert::NeedsInput };
                 vec![Command::ShowIndicator(Alert::NeedsInput)]
             }
 
             // A permission prompt outranks completion, so it may upgrade the indicator...
             (State::Ready { session, alert: Alert::Done }, Event::AgentNeedsInput { .. }) => {
-                self.state =
-                    State::Ready { session: session.clone(), alert: Alert::NeedsInput };
+                self.state = State::Ready { session: session.clone(), alert: Alert::NeedsInput };
                 vec![Command::ShowIndicator(Alert::NeedsInput)]
             }
 
             // ...but nothing may quietly downgrade it back to "just done".
-            (State::Ready { alert: Alert::NeedsInput, .. }, Event::AgentDone { .. }) => {
-                Vec::new()
-            }
+            (State::Ready { alert: Alert::NeedsInput, .. }, Event::AgentDone { .. }) => Vec::new(),
 
             // You read the indicator, went back to the terminal and set the agent going
             // again without leaving the reader. Straight back to reading, and drop the

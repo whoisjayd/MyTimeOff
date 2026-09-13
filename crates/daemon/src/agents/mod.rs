@@ -232,12 +232,8 @@ mod tests {
                 current: at > 0,
             })
             .collect();
-        let status = Status {
-            path: PathBuf::from("settings.json"),
-            present: true,
-            wired,
-            trouble: None,
-        };
+        let status =
+            Status { path: PathBuf::from("settings.json"), present: true, wired, trouble: None };
         assert!(!status.complete(Agent::ClaudeCode));
     }
 }

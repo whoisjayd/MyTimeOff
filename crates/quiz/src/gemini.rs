@@ -139,7 +139,8 @@ fn text_of(reply: &Value) -> String {
         steps
             .iter()
             .filter(|step| {
-                !only_model_output || step.get("type").and_then(Value::as_str) == Some("model_output")
+                !only_model_output
+                    || step.get("type").and_then(Value::as_str) == Some("model_output")
             })
             .filter_map(|step| step.get("content")?.as_array())
             .flatten()

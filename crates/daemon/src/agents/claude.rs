@@ -50,9 +50,8 @@ pub fn settings_path() -> io::Result<PathBuf> {
     if let Some(moved) = std::env::var_os("CLAUDE_CONFIG_DIR") {
         return Ok(PathBuf::from(moved).join("settings.json"));
     }
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .ok_or_else(|| {
+    let home =
+        std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 "no USERPROFILE or HOME, so there is no way to find .claude/settings.json",
@@ -234,9 +233,7 @@ pub fn status(token: &str) -> io::Result<Status> {
     let path = settings_path()?;
     let present = path.parent().is_some_and(Path::is_dir);
     match read(&path) {
-        Ok(settings) => {
-            Ok(Status { path, present, wired: found(&settings, token), trouble: None })
-        }
+        Ok(settings) => Ok(Status { path, present, wired: found(&settings, token), trouble: None }),
         Err(error) => {
             Ok(Status { path, present, wired: Vec::new(), trouble: Some(error.to_string()) })
         }

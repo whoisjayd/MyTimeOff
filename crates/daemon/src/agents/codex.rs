@@ -54,9 +54,8 @@ pub fn settings_path() -> io::Result<PathBuf> {
     if let Some(moved) = std::env::var_os("CODEX_HOME") {
         return Ok(PathBuf::from(moved).join("config.toml"));
     }
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .ok_or_else(|| {
+    let home =
+        std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 "no USERPROFILE or HOME, so there is no way to find .codex/config.toml",
@@ -120,9 +119,7 @@ fn really_named(candidate: &Path, name: &str) -> bool {
 fn is_ours(command: &str) -> bool {
     let (program, rest) = split_program(command);
     rest.trim() == WORD
-        && Path::new(program)
-            .file_stem()
-            .is_some_and(|stem| stem.eq_ignore_ascii_case("mytimeoff"))
+        && Path::new(program).file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("mytimeoff"))
 }
 
 /// The program out of a command line, and whatever follows it.
@@ -148,7 +145,12 @@ pub fn status() -> io::Result<Status> {
     let doc = match read(&path) {
         Ok(doc) => doc,
         Err(error) => {
-            return Ok(Status { path, present, wired: Vec::new(), trouble: Some(error.to_string()) });
+            return Ok(Status {
+                path,
+                present,
+                wired: Vec::new(),
+                trouble: Some(error.to_string()),
+            });
         }
     };
     // A shim that cannot be found is worth saying out loud: every hook in the file is
@@ -294,9 +296,8 @@ pub fn unwire(doc: &mut DocumentMut) -> io::Result<usize> {
                 continue;
             };
             let before = entries.len();
-            entries.retain(|entry| {
-                !entry.get("command").and_then(Item::as_str).is_some_and(is_ours)
-            });
+            entries
+                .retain(|entry| !entry.get("command").and_then(Item::as_str).is_some_and(is_ours));
             if entries.len() < before {
                 removed += before - entries.len();
                 if entries.is_empty() {
@@ -522,7 +523,10 @@ command = '"C:\MyTimeOff\bin\mytimeoff.exe" hook'
 
     #[test]
     fn the_program_is_read_back_out_of_its_quotes() {
-        assert_eq!(split_program(r#""C:\a b\mytimeoff.exe" hook"#), (r"C:\a b\mytimeoff.exe", " hook"));
+        assert_eq!(
+            split_program(r#""C:\a b\mytimeoff.exe" hook"#),
+            (r"C:\a b\mytimeoff.exe", " hook")
+        );
         assert_eq!(split_program("mytimeoff hook"), ("mytimeoff", "hook"));
         assert_eq!(split_program("mytimeoff"), ("mytimeoff", ""));
     }
@@ -555,8 +559,7 @@ command = '"C:\MyTimeOff\bin\mytimeoff.exe" hook'
     fn hooks_written_as_something_other_than_a_table_are_refused() {
         // Writing an array of tables into an inline table would produce a config file
         // that no longer parses. Refusing is the only safe answer.
-        let mut doc: DocumentMut =
-            "hooks = { Stop = [] }\n".parse().expect("valid TOML");
+        let mut doc: DocumentMut = "hooks = { Stop = [] }\n".parse().expect("valid TOML");
         assert!(wire(&mut doc, OURS).is_err());
         assert!(unwire(&mut doc).is_err());
     }

@@ -153,8 +153,10 @@ mod tests {
         assert_eq!(wire["book"]["format"], "epub");
         assert_eq!(wire["at"]["kind"], "cfi");
         assert_eq!(wire["at"]["page_label"], "12");
-        assert_eq!(serde_json::to_value(Resume { at: None, ..resume }).expect("s")["at"],
-                   serde_json::Value::Null);
+        assert_eq!(
+            serde_json::to_value(Resume { at: None, ..resume }).expect("s")["at"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]
