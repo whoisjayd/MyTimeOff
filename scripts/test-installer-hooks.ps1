@@ -20,9 +20,10 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $script = Join-Path $root 'crates\shell\tests\path-hooks.nsi'
 
-$makensis = Join-Path $env:LOCALAPPDATA 'tauri\NSIS\makensis.exe'
+$onPath = Get-Command makensis -ErrorAction SilentlyContinue
+$makensis = if ($onPath) { $onPath.Source } else { Join-Path $env:LOCALAPPDATA 'tauri\NSIS\makensis.exe' }
 if (-not (Test-Path $makensis)) {
-    throw "no makensis at $makensis - run ``pnpm tauri build`` once so Tauri fetches NSIS"
+    throw "no makensis on PATH or at $makensis - install it (e.g. ``choco install nsis``) or run ``pnpm tauri build`` once so Tauri fetches it"
 }
 
 $work = Join-Path ([System.IO.Path]::GetTempPath()) "mytimeoff-hooks-$PID"
